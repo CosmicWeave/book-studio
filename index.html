@@ -1,0 +1,527 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#4f46e5" />
+    <meta name="description" content="Generate, manage, and export full-length books with the power of AI." />
+    
+    <!-- PWA & Mobile Capable -->
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
+    <link rel="apple-touch-icon" href="icon.svg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Book Studio" />
+
+    <title>AI Book Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="vendor/jspdf.umd.min.js" defer></script>
+    <script src="vendor/html2canvas.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Literata:ital,wght@0,400;0,700;1,400&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&family=Roboto+Mono&family=Open+Sans:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    <style>
+      @import url('https://rsms.me/inter/inter.css');
+      html {
+        font-family: 'Inter', sans-serif;
+      }
+      /* Animations */
+      @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      .animate-fade-in {
+        animation: fade-in 0.3s ease-out forwards;
+      }
+      @keyframes fade-in-up {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .animate-fade-in-up {
+          animation: fade-in-up 0.3s ease-out forwards;
+      }
+      @keyframes slide-in-up {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .animate-slide-in-up {
+          animation: slide-in-up 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+      }
+      @keyframes slide-in-down {
+        from { opacity: 0; transform: translateY(-20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .animate-slide-in-down {
+          animation: slide-in-down 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+      }
+      @keyframes slide-in-left {
+        from { opacity: 0; transform: translateX(-100%); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      .animate-slide-in-left {
+          animation: slide-in-left 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+      }
+      @keyframes music-bar {
+        0%, 100% { height: 20%; }
+        50% { height: 100%; }
+      }
+      .animate-music-bar-1 { animation: music-bar 0.8s infinite ease-in-out; }
+      .animate-music-bar-2 { animation: music-bar 0.8s infinite ease-in-out 0.2s; }
+      .animate-music-bar-3 { animation: music-bar 0.8s infinite ease-in-out 0.4s; }
+
+      /* Empty State Background */
+      .empty-state-bg {
+        background-image:
+            linear-gradient(rgba(228, 228, 231, 0.4) 1px, transparent 1px),
+            linear-gradient(to right, rgba(228, 228, 231, 0.4) 1px, transparent 1px);
+        background-size: 20px 20px;
+        background-position: -1px -1px;
+      }
+      .dark .empty-state-bg {
+          background-image:
+              linear-gradient(rgba(63, 63, 70, 0.4) 1px, transparent 1px),
+              linear-gradient(to right, rgba(63, 63, 70, 0.4) 1px, transparent 1px);
+      }
+
+      /* Base styles for preview and editor */
+      .prose-base {
+        font-family: 'Open Sans', sans-serif;
+        line-height: 1.7;
+      }
+      .prose-base p {
+          text-align: justify;
+          hyphens: auto;
+          margin-bottom: 1rem;
+      }
+      .prose-base h1 {
+        font-size: 2.75rem;
+        font-weight: 800;
+        text-align: center;
+        margin-bottom: 2rem;
+        line-height: 1.2;
+      }
+      .prose-base h2 {
+        font-size: 1.75rem;
+        font-weight: 700;
+        margin-top: 2.5rem;
+        padding-bottom: 0.5rem;
+        border-bottom-width: 1px;
+      }
+      .prose-base h3 {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin-top: 2rem;
+      }
+      .prose-base h4 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin-top: 1.5rem;
+      }
+      .prose-base img {
+        margin-left: auto;
+        margin-right: auto;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      }
+      /* Ensure lists are visible despite resets */
+      .prose-base ul, .tiptap ul {
+        list-style-type: disc;
+        margin-left: 1.5rem;
+        margin-bottom: 1rem;
+        padding-left: 1rem;
+      }
+      .prose-base ol, .tiptap ol {
+        list-style-type: decimal;
+        margin-left: 1.5rem;
+        margin-bottom: 1rem;
+        padding-left: 1rem;
+      }
+      /* Ensure nested lists work */
+      .prose-base ul ul, .prose-base ol ul, .tiptap ul ul, .tiptap ol ul {
+        list-style-type: circle;
+      }
+      .prose-base ol ol, .prose-base ul ol, .tiptap ol ol, .tiptap ul ol {
+        list-style-type: lower-alpha;
+      }
+      .prose-base li, .tiptap li {
+        margin-bottom: 0.5rem;
+      }
+      
+      /* Markdown-specific rendering improvements */
+      .prose-base blockquote {
+          border-left: 4px solid #e5e7eb; /* gray-200 */
+          padding-left: 1rem;
+          font-style: italic;
+          color: #4b5563; /* gray-600 */
+          margin-bottom: 1rem;
+      }
+      .dark .prose-base blockquote {
+          border-left-color: #4b5563; /* gray-600 */
+          color: #9ca3af; /* gray-400 */
+      }
+      .prose-base pre {
+          background-color: #f3f4f6; /* gray-100 */
+          padding: 1rem;
+          border-radius: 0.5rem;
+          overflow-x: auto;
+          margin-bottom: 1rem;
+          font-family: monospace;
+      }
+      .dark .prose-base pre {
+          background-color: #1f2937; /* gray-800 */
+      }
+      .prose-base code {
+          background-color: #f3f4f6; /* gray-100 */
+          padding: 0.2em 0.4em;
+          border-radius: 0.25rem;
+          font-family: monospace;
+          font-size: 0.875em;
+      }
+      .dark .prose-base code {
+          background-color: #374151; /* gray-700 */
+      }
+      .prose-base hr {
+          border-color: #e5e7eb; /* gray-200 */
+          margin-top: 2rem;
+          margin-bottom: 2rem;
+      }
+      .dark .prose-base hr {
+          border-color: #4b5563; /* gray-600 */
+      }
+
+      /* Tiptap editor-specific styles */
+      .tiptap {
+        outline: none;
+      }
+      .tiptap > *:first-child {
+        margin-top: 0;
+      }
+      .tiptap h2 {
+         border-bottom-color: #d4d4d8; /* zinc-300 */
+      }
+      .dark .tiptap h2 {
+        border-bottom-color: #3f3f46; /* zinc-700 */
+      }
+      .tiptap p {
+        position: relative;
+      }
+
+      /* Tiptap Tables */
+      .tiptap table {
+        border-collapse: collapse;
+        table-layout: fixed;
+        width: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      .tiptap table td, .tiptap table th {
+        min-width: 1em;
+        border: 2px solid #ced4da;
+        padding: 3px 5px;
+        vertical-align: top;
+        box-sizing: border-box;
+        position: relative;
+      }
+      .dark .tiptap table td, .dark .tiptap table th {
+        border-color: #4b5563;
+      }
+      .tiptap table th {
+        font-weight: bold;
+        text-align: left;
+        background-color: #f1f3f5;
+      }
+      .dark .tiptap table th {
+        background-color: #374151;
+      }
+      .tiptap table .selectedCell:after {
+        z-index: 2;
+        position: absolute;
+        content: "";
+        left: 0; right: 0; top: 0; bottom: 0;
+        background: rgba(200, 200, 255, 0.4);
+        pointer-events: none;
+      }
+
+      /* Tiptap Task Lists */
+      .tiptap ul[data-type="taskList"] {
+        list-style: none;
+        padding: 0;
+        margin-left: 0;
+      }
+      .tiptap ul[data-type="taskList"] li {
+        display: flex;
+        margin-bottom: 0.5rem;
+      }
+      .tiptap ul[data-type="taskList"] li label {
+        flex: 0 0 auto;
+        margin-right: 0.5rem;
+        user-select: none;
+      }
+      .tiptap ul[data-type="taskList"] li div {
+        flex: 1 1 auto;
+      }
+
+      /* Tiptap Links */
+      .tiptap a {
+        color: #4f46e5;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .dark .tiptap a {
+        color: #818cf8;
+      }
+
+      /* AI Image Suggestion Icon */
+      span[data-ai-image-suggestion] {
+        position: absolute;
+        left: -40px;
+        top: 4px;
+        width: 28px;
+        height: 28px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background-color: #eef2ff; /* indigo-50 */
+        color: #4338ca; /* indigo-700 */
+        transition: all 0.2s;
+        border: 1px solid #e0e7ff; /* indigo-100 */
+      }
+      span[data-ai-image-suggestion]:hover {
+        background-color: #c7d2fe; /* indigo-200 */
+        transform: scale(1.1);
+      }
+      span[data-ai-image-suggestion]::before {
+        content: '';
+        display: block;
+        width: 16px;
+        height: 16px;
+        background-color: currentColor;
+        mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='18' x='3' y='3' rx='2'/%3E%3Ccircle cx='9' cy='9' r='2'/%3E%3Cpath d='m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21'/%3E%3C/svg%3E");
+        mask-size: contain;
+        mask-repeat: no-repeat;
+        mask-position: center;
+      }
+      .dark span[data-ai-image-suggestion] {
+        background-color: #3730a3; /* indigo-800 */
+        color: #a5b4fc; /* indigo-300 */
+        border: 1px solid #312e81; /* indigo-900 */
+      }
+      .dark span[data-ai-image-suggestion]:hover {
+        background-color: #4338ca; /* indigo-700 */
+      }
+
+
+      /* AI Writing Indicator */
+      .tiptap.is-ai-writing {
+        background-color: rgba(239, 246, 255, 0.5); /* blue-50 with opacity */
+        transition: background-color 0.3s ease-in-out;
+        border-radius: 0.5rem;
+      }
+      .dark .tiptap.is-ai-writing {
+        background-color: rgba(30, 41, 59, 0.5); /* slate-800 with opacity */
+      }
+      @keyframes blink {
+        50% { opacity: 0; }
+      }
+      .tiptap.is-ai-writing p:last-of-type::after,
+      .tiptap.is-ai-writing h4:last-of-type::after,
+      .tiptap.is-ai-writing li:last-of-type::after {
+        content: '▋';
+        display: inline-block;
+        animation: blink 0.8s step-start infinite;
+        color: #4f46e5; /* indigo-600 */
+        margin-left: 2px;
+      }
+      .dark .tiptap.is-ai-writing p:last-of-type::after,
+      .dark .tiptap.is-ai-writing h4:last-of-type::after,
+      .dark .tiptap.is-ai-writing li:last-of-type::after {
+        color: #a5b4fc; /* indigo-300 */
+      }
+
+
+      /* Reader Page Mode Styles */
+      .page-content-wrapper {
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch; /* Momentum scrolling */
+      }
+      /* Hide scrollbar */
+      .page-content-wrapper {
+        scrollbar-width: none; /* Firefox */
+      }
+      .page-content-wrapper::-webkit-scrollbar {
+        display: none; /* Chrome, Safari */
+      }
+      .paginated-content {
+        height: calc(100vh - 12rem); 
+        width: 100%;
+        column-width: 100%;
+        column-gap: 5rem;
+      }
+      .paginated-content > * {
+         scroll-snap-align: start;
+         break-inside: avoid;
+      }
+      .paginated-content h1, .paginated-content h2 {
+          break-before: column;
+      }
+
+      /* Audiobook Highlight */
+      .speaking-highlight {
+        background-color: rgba(239, 246, 255, 1); /* blue-50 */
+        color: #1e3a8a; /* blue-900 */
+        transition: background-color 0.3s ease;
+        border-radius: 4px;
+        padding: 0.1em 0.2em;
+        margin: -0.1em -0.2em;
+      }
+      .dark .speaking-highlight {
+        background-color: rgba(30, 41, 59, 1); /* slate-800 */
+        color: #bfdbfe; /* blue-200 */
+      }
+
+      /* Reader Audiobook Paragraph Highlight */
+      .reader-paragraph-speaking {
+        background-color: #FEF3C7; /* amber-100 */
+        transition: background-color 0.3s ease;
+        border-radius: 4px;
+        padding: 0.2em;
+        margin: -0.2em;
+      }
+      .reader-theme-dark .reader-paragraph-speaking {
+        background-color: #451a03; /* A dark orange/brown */
+      }
+      .reader-theme-sepia .reader-paragraph-speaking {
+        background-color: #fefce8; /* yellow-50 */
+      }
+      .reader-theme-high-contrast .reader-paragraph-speaking {
+        background-color: #3f3f46; /* zinc-700 */
+        color: #fbbf24; /* amber-400 */
+      }
+
+      /* Reader Base & Themes */
+      .reader-base {
+        transition: background-color 0.3s, color 0.3s;
+      }
+      .reader-theme-light { background-color: #ffffff; color: #1f2937; }
+      .reader-theme-light .prose-base, .reader-theme-light .prose-base h1, .reader-theme-light .prose-base h2, .reader-theme-light .prose-base h3 { color: inherit; }
+
+      .reader-theme-dark { background-color: #111827; color: #d1d5db; }
+      .reader-theme-dark .prose-base, .reader-theme-dark .prose-base h1, .reader-theme-dark .prose-base h2, .reader-theme-dark .prose-base h3 { color: inherit; }
+      .reader-theme-dark .prose-base h1, .reader-theme-dark .prose-base h2, .reader-theme-dark .prose-base h3 { color: #f9fafb; }
+
+      .reader-theme-sepia { background-color: #fbf0e4; color: #5c4033; }
+      .reader-theme-sepia .prose-base, .reader-theme-sepia .prose-base h1, .reader-theme-sepia .prose-base h2, .reader-theme-sepia .prose-base h3 { color: inherit; }
+      .reader-theme-sepia .prose-base h1, .reader-theme-sepia .prose-base h2, .reader-theme-sepia .prose-base h3 { color: #442d20; }
+
+      .reader-theme-high-contrast { background-color: #000000; color: #ffffff; }
+      .reader-theme-high-contrast .prose-base, .reader-theme-high-contrast .prose-base h1, .reader-theme-high-contrast .prose-base h2, .reader-theme-high-contrast .prose-base h3 { color: #ffffff; }
+      .reader-theme-high-contrast .prose-base a { color: #ffff00; text-decoration: underline; }
+      
+      /* Reader Fonts */
+      .reader-font-merriweather .prose-base { font-family: 'Merriweather', serif; }
+      .reader-font-literata .prose-base { font-family: 'Literata', serif; }
+      .reader-font-inter .prose-base { font-family: 'Inter', sans-serif; }
+      .reader-font-roboto-mono .prose-base { font-family: 'Roboto Mono', monospace; }
+      
+      /* Reader Layout */
+      .reader-layout { margin-left: auto; margin-right: auto; padding-left: 1.5rem; padding-right: 1.5rem; }
+
+      /* User Chat Bubble Markdown Overrides */
+      .prose-user-bubble {
+        color: white !important;
+      }
+      .prose-user-bubble strong, 
+      .prose-user-bubble h1, 
+      .prose-user-bubble h2, 
+      .prose-user-bubble h3, 
+      .prose-user-bubble h4, 
+      .prose-user-bubble code, 
+      .prose-user-bubble a,
+      .prose-user-bubble li,
+      .prose-user-bubble p {
+        color: white !important;
+      }
+      .prose-user-bubble a {
+        text-decoration: underline;
+        text-decoration-color: rgba(255,255,255,0.6);
+      }
+      .prose-user-bubble code {
+        background-color: rgba(255,255,255,0.2) !important;
+      }
+      .prose-user-bubble pre {
+        background-color: rgba(0,0,0,0.2) !important;
+        color: white !important;
+      }
+      .prose-user-bubble blockquote {
+        border-left-color: rgba(255,255,255,0.5) !important;
+        color: rgba(255,255,255,0.9) !important;
+      }
+      .prose-user-bubble ul > li::marker {
+        color: rgba(255,255,255,0.7);
+      }
+      .prose-user-bubble ol > li::marker {
+        color: rgba(255,255,255,0.7);
+      }
+    </style>
+  <script>
+    // Prevents flash of unstyled content (FOUC) when loading dark mode.
+    (function() {
+      const theme = localStorage.getItem('theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (theme === 'dark' || (!theme && prefersDark)) {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
+  <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.sh/@google/genai@^1.13.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.1/",
+    "react/": "https://esm.sh/react@^19.1.1/",
+    "react": "https://esm.sh/react@^19.1.1",
+    "@tiptap/core": "https://esm.sh/@tiptap/core@^2.4.0",
+    "@tiptap/extension-bubble-menu": "https://esm.sh/@tiptap/extension-bubble-menu@^2.4.0",
+    "@tiptap/extension-floating-menu": "https://esm.sh/@tiptap/extension-floating-menu@^2.4.0",
+    "@tiptap/extension-image": "https://esm.sh/@tiptap/extension-image@^2.4.0",
+    "@tiptap/extension-underline": "https://esm.sh/@tiptap/extension-underline@^2.4.0",
+    "@tiptap/extension-text-align": "https://esm.sh/@tiptap/extension-text-align@^2.4.0",
+    "@tiptap/extension-subscript": "https://esm.sh/@tiptap/extension-subscript@^2.4.0",
+    "@tiptap/extension-superscript": "https://esm.sh/@tiptap/extension-superscript@^2.4.0",
+    "@tiptap/extension-table": "https://esm.sh/@tiptap/extension-table@^2.4.0",
+    "@tiptap/extension-table-row": "https://esm.sh/@tiptap/extension-table-row@^2.4.0",
+    "@tiptap/extension-table-cell": "https://esm.sh/@tiptap/extension-table-cell@^2.4.0",
+    "@tiptap/extension-table-header": "https://esm.sh/@tiptap/extension-table-header@^2.4.0",
+    "@tiptap/extension-task-list": "https://esm.sh/@tiptap/extension-task-list@^2.4.0",
+    "@tiptap/extension-task-item": "https://esm.sh/@tiptap/extension-task-item@^2.4.0",
+    "@tiptap/extension-link": "https://esm.sh/@tiptap/extension-link@^2.4.0",
+    "@tiptap/extension-text-style": "https://esm.sh/@tiptap/extension-text-style@^2.4.0",
+    "@tiptap/extension-color": "https://esm.sh/@tiptap/extension-color@^2.4.0",
+    "@tiptap/extension-highlight": "https://esm.sh/@tiptap/extension-highlight@^2.4.0",
+    "@tiptap/react": "https://esm.sh/@tiptap/react@^2.4.0",
+    "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@^2.4.0",
+    "react-router-dom": "https://esm.sh/react-router-dom@^6.25.1",
+    "react-router": "https://esm.sh/react-router@^6.25.1",
+    "immer": "https://aistudiocdn.com/immer@^10.1.3",
+    "marked": "https://esm.sh/marked@^13.0.1",
+    "turndown": "https://esm.sh/turndown@7.1.2",
+    "pdfjs-dist": "https://esm.sh/pdfjs-dist@^4.4.178",
+    "pdfjs-dist/build/pdf.worker.mjs": "https://esm.sh/pdfjs-dist@^4.4.178/build/pdf.worker.mjs",
+    "turndown-plugin-gfm": "https://aistudiocdn.com/turndown-plugin-gfm@^1.0.2"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-zinc-50 dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 antialiased">
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
