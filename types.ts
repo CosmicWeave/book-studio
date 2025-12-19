@@ -1,3 +1,4 @@
+
 import { Content, Part } from '@google/genai';
 
 export type Page = 'dashboard' | 'documents' | 'editor' | 'reader' | 'instructions' | 'macros' | 'settings' | 'series' | 'reading' | 'archived' | 'trash';
@@ -15,6 +16,7 @@ export interface Book {
     generateImages: boolean;
     imageGenerationInstructions: string;
     voiceStyleInstructions?: string;
+    aiPersona?: string; // New: AI Personality
     status: 'configuring' | 'outlining' | 'writing' | 'complete' | 'archived';
     deletedAt?: number; // Timestamp if soft-deleted
     outline: ChapterOutline[];
@@ -30,6 +32,13 @@ export interface Book {
     creationConfig?: BookCreationConfig;
     knowledgeBase?: KnowledgeSheet[];
     bookChatHistory?: ChatMessage[];
+}
+
+export interface CustomPersona {
+    id: string;
+    name: string;
+    description: string;
+    instructions: string;
 }
 
 export interface GeneralDoc {
@@ -262,6 +271,13 @@ export interface PlotHole {
     location: string;
     severity: 'High' | 'Medium' | 'Low';
     explanation: string;
+    suggestion: string;
+}
+
+export interface LoreInconsistency {
+    passage: string;
+    contradiction: string;
+    knowledgeSheetName: string;
     suggestion: string;
 }
 

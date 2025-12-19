@@ -1,5 +1,5 @@
 
-import React, { ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo, ReactNode } from 'react';
 
 const ErrorIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8 text-red-600 dark:text-red-300">
@@ -17,7 +17,8 @@ interface State {
   errorInfo?: ErrorInfo;
 }
 
-class ErrorBoundary extends React.Component<Props, State> {
+// Inherit from Component to ensure this.setState and this.props are correctly inherited and typed
+class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
     error: undefined,
@@ -30,6 +31,7 @@ class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("Uncaught error:", error, errorInfo);
+    // Explicitly using inherited setState to update internal error tracking
     this.setState({ error, errorInfo });
   }
 
@@ -67,6 +69,7 @@ class ErrorBoundary extends React.Component<Props, State> {
       );
     }
 
+    // Access children through inherited props property
     return this.props.children;
   }
 }

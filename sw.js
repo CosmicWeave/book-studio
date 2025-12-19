@@ -56,7 +56,7 @@ self.addEventListener('install', (event) => {
 
 // Activate Event: Clean up old caches
 self.addEventListener('activate', (event) => {
-  const cacheWhitelist = [CACHE_NAME];
+  const cacheWhitelist = [CACHE_NAME, 'share-target-cache'];
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
@@ -90,12 +90,45 @@ const isAssetRequest = (url) => {
 };
 
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+
+  // Handle Share Target POST
+  if (event.request.method === 'POST' && url.pathname === '/share-target/') {
+    event.respondWith((async () => {
+      try {
+        const formData = await event.request.formData();
+        const title = formData.get('title');
+        const text = formData.get('text');
+        const urlVal = formData.get('url');
+
+        // Construct a simple data object
+        const sharedData = {
+            title: title || 'Shared Content',
+            text: text || '',
+            url: urlVal || '',
+            timestamp: Date.now()
+        };
+
+        // Store in a specific cache for the client to pick up
+        const cache = await caches.open('share-target-cache');
+        await cache.put('/shared-content', new Response(JSON.stringify(sharedData), {
+          headers: { 'Content-Type': 'application/json' }
+        }));
+
+        // Redirect to the app root
+        return Response.redirect('/', 303);
+      } catch (e) {
+        console.error('Share target failed', e);
+        return Response.redirect('/', 303);
+      }
+    })());
+    return;
+  }
+
   // Ignore non-GET requests (POST, PUT, DELETE are network-only)
   if (event.request.method !== 'GET') {
     return;
   }
-
-  const url = new URL(event.request.url);
 
   // Strategy 1: HTML Navigation -> Network First, Fallback to Cache (App Shell)
   if (event.request.mode === 'navigate') {
@@ -131,13 +164,12 @@ self.addEventListener('fetch', (event) => {
         try {
             const networkResponse = await fetch(event.request);
             // Check valid response before caching
-            if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic' || networkResponse.type === 'cors') {
+            if (networkResponse && networkResponse.status === 200 && (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
               cache.put(event.request, networkResponse.clone());
             }
             return networkResponse;
         } catch (error) {
-            console.log('[Service Worker] Fetch failed for asset:', event.request.url);
-            // For images, we could return a placeholder here if desired
+            // console.log('[Service Worker] Fetch failed for asset:', event.request.url);
             throw error;
         }
       })
@@ -146,5 +178,4 @@ self.addEventListener('fetch', (event) => {
   }
   
   // Strategy 3: Default (Network Only) for everything else (APIs, etc.)
-  // This ensures fresh data for API calls when online.
 });

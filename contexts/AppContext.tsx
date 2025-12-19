@@ -66,6 +66,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
 
     const fetchData = useCallback(async () => {
         try {
+            await db.init();
             const [booksData, seriesData, macrosData, docsData, providerSetting] = await Promise.all([
                 db.books.getAll(),
                 db.series.getAll(),

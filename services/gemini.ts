@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type, Chat, Content, FunctionDeclaration, Modality, GroundingChunk as GenAIGroundingChunk, FunctionCall } from '@google/genai';
-import { Book, ChapterOutline, GroundingChunk, AnalysisResult, KnowledgeSheet, Series, PacingAnalysisResult, ShowTellAnalysisResult, SeriesInconsistency, StyleSuggestion, CharacterVoiceInconsistency, PlotHole } from '../types';
+import { Book, ChapterOutline, GroundingChunk, AnalysisResult, KnowledgeSheet, Series, PacingAnalysisResult, ShowTellAnalysisResult, SeriesInconsistency, StyleSuggestion, CharacterVoiceInconsistency, PlotHole, LoreInconsistency } from '../types';
 
 // Lazily initialize to avoid crashing on load if API_KEY is missing.
 let aiInstance: GoogleGenAI | null = null;
@@ -34,6 +34,14 @@ export const getAi = (): GoogleGenAI => {
     aiInstance = new GoogleGenAI({ apiKey });
     return aiInstance;
 }
+
+export const PERSONA_INSTRUCTIONS: Record<string, string> = {
+    'Standard Co-Author': 'You are an expert co-author and editor. Be helpful, creative, and encouraging.',
+    'Ruthless Editor': 'You are a harsh, critical editor. Focus on cutting fluff, fixing logic holes, and improving pacing. Do not sugarcoat your feedback. Be direct and concise.',
+    'Cheerleader': 'You are an enthusiastic writing coach. Focus on what is working well, offer gentle suggestions, and keep the user motivated. Use emojis and encouraging language.',
+    'Lorekeeper': 'You are a continuity expert. You are obsessed with consistency in names, dates, world-building rules, and character histories. Flag any contradiction immediately.',
+    'Poet': 'You are a master of prose. Focus on sensory details, metaphors, rhythm, and emotional resonance. Suggest lyrical improvements.',
+};
 
 export const formatKnowledgeBaseForPrompt = (
     bookKnowledgeBase?: KnowledgeSheet[],
@@ -177,6 +185,7 @@ export const streamChatWithBook = async (
         knowledgeBase?: KnowledgeSheet[];
         seriesKnowledgeBase?: KnowledgeSheet[];
     },
+    personaInstructions: string,
     onChunk: (text: string) => void,
     onToolCall: (toolCall: FunctionCall) => void
 ): Promise<Content[]> => {
@@ -186,8 +195,8 @@ export const streamChatWithBook = async (
     const validHistory = history.filter(h => h.parts && h.parts.length > 0 && h.parts.some(p => (p.text && p.text.trim() !== '') || p.functionCall));
 
     // Construct a system instruction that gives the AI deep context about the book
-    let systemPrompt = `You are an expert co-author and editor for the book titled "${bookContext.topic}".
-Your goal is to assist the user in writing, brainstorming, and refining the book. You have access to the brainstorming history and should use it as the core foundation.
+    let systemPrompt = `${personaInstructions || PERSONA_INSTRUCTIONS['Standard Co-Author']}
+You are assisting the user in writing the book titled "${bookContext.topic}".
 
 ${formatKnowledgeBaseForPrompt(bookContext.knowledgeBase, bookContext.seriesKnowledgeBase)}
 
@@ -208,9 +217,8 @@ ${bookContext.currentChapter.content.substring(0, 15000)}... (truncated)
 
     systemPrompt += `
 **Instructions:**
-- Be helpful, creative, and encouraging.
-- Act as a "perfect servant" to the user's vision, while offering expert advice.
-- If the user asks for ideas, ensure they fit the established outline, characters, and tone from the brainstorming phase.
+- Act as a "perfect servant" to the user's vision, while offering expert advice based on your persona.
+- If the user asks for ideas, ensure they fit the established outline, characters, and tone.
 - You have the ability to propose edits to the book content using the \`updateChapter\` tool.
 - **IMPORTANT:** If the user explicitly asks you to "rewrite", "edit", "fix", or "change" the content of the current chapter, you MUST use the \`updateChapter\` tool to propose the new content.
 - When using \`updateChapter\`, ensure the \`newContent\` is the complete, fully formed HTML for the chapter. 
@@ -400,7 +408,6 @@ export const extractBookMetadataFromChat = async (history: Content[]) => {
     };
 };
 
-// ... (rest of file: generateSpeech, generateVoiceInstructions, improveInstructionPrompt, etc.)
 export const generateSpeech = async (text: string, voiceName: string, voiceInstructions?: string): Promise<string> => {
     const ai = getAi();
     let promptText = text;
@@ -549,12 +556,19 @@ Return a JSON object with "newFirstParagraph" and "newLastParagraph" strings. If
     }
 };
 
-export const analyzeChapterContent = async (chapterHtml: string, book: Book, seriesKnowledgeBase?: KnowledgeSheet[]): Promise<AnalysisResult> => {
+export const analyzeChapterContent = async (
+    chapterHtml: string, 
+    book: Book, 
+    seriesKnowledgeBase?: KnowledgeSheet[],
+    personaInstructions?: string
+): Promise<AnalysisResult> => {
     const ai = getAi();
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = chapterHtml;
     const chapterText = tempDiv.textContent || '';
-    const prompt = `You are an expert book editor. Analyze the following chapter from a book and provide feedback.
+    const persona = personaInstructions || PERSONA_INSTRUCTIONS['Standard Co-Author'];
+
+    const prompt = `${persona} Analyze the following chapter from a book and provide feedback.
 Your response MUST be a JSON object with two keys: "feedback" (a string with your overall analysis) and "suggestions" (an array of objects, each with "title", "description", and "prompt").
 **Book Topic:** ${book.topic}
 **Overall Instructions:** ${book.instructions}
@@ -844,6 +858,81 @@ export const analyzePlotHoles = async (content: string, outline: ChapterOutline[
         return [];
     }
 };
+
+export const analyzeLoreConsistency = async (content: string, knowledgeBase: KnowledgeSheet[]): Promise<LoreInconsistency[]> => {
+    const ai = getAi();
+    const kbContext = knowledgeBase.map(k => `- ${k.name} (${k.category}): ${k.content}`).join('\n');
+    
+    const prompt = `You are a world-building and lore consistency expert.
+    
+    **World Knowledge Base:**
+    ${kbContext}
+    
+    **Chapter Text:**
+    "${content.substring(0, 20000)}"
+    
+    **Task:**
+    Analyze the chapter text specifically for contradictions with the established knowledge base (facts, history, character traits, magic rules, etc.).
+    
+    Return a JSON array of objects with:
+    - "passage": The quote from the text containing the error.
+    - "contradiction": Explanation of why it contradicts the lore.
+    - "knowledgeSheetName": The name of the Knowledge Base entry it contradicts.
+    - "suggestion": A rewritten version of the passage that fixes the error.
+    
+    If no inconsistencies are found, return an empty array.`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            passage: { type: Type.STRING },
+                            contradiction: { type: Type.STRING },
+                            knowledgeSheetName: { type: Type.STRING },
+                            suggestion: { type: Type.STRING }
+                        },
+                        required: ["passage", "contradiction", "knowledgeSheetName", "suggestion"]
+                    }
+                }
+            }
+        });
+        return JSON.parse(response.text.trim());
+    } catch (e) {
+        console.error("Error analyzing lore consistency:", e);
+        return [];
+    }
+};
+
+export const predictNextText = async (context: string, bookInstructions: string): Promise<string> => {
+    const ai = getAi();
+    const prompt = `You are a helpful co-author. Complete the following sentence or paragraph naturally, maintaining the author's style.
+    
+    **Style Instructions:** ${bookInstructions}
+    
+    **Preceding Context:**
+    "${context.slice(-1000)}"
+    
+    Return ONLY the completion text. Do not repeat the context. Keep it concise (1-2 sentences).`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: { maxOutputTokens: 100 }
+        });
+        return response.text?.trim() || "";
+    } catch (e) {
+        console.warn("Prediction failed", e);
+        return "";
+    }
+}
 
 export const generateChapterContent = async (
     topic: string,

@@ -20,13 +20,14 @@ import {
 import { getCredentials } from '../services/googleDriveConfig';
 import { GoogleDriveFile, SyncProvider } from '../types';
 import GoogleDriveRestoreModal from '../components/GoogleDriveRestoreModal';
-import { AUTO_BACKUP_ENABLED_ID, manualTriggerBackup, listServerBackups, fetchBackupContent, fetchLatestBackup } from '../services/backupService';
+import { AUTO_BACKUP_ENABLED_ID, LOW_DATA_MODE_ID, BACKUP_API_KEY_ID, manualTriggerBackup, listServerBackups, fetchBackupContent, fetchLatestBackup, getNetworkStats, createCloudSnapshot } from '../services/backupService';
 import { toastService } from '../services/toastService';
 import { modalService } from '../services/modalService';
 import Icon, { IconName } from '../components/Icon';
 import ServerRestoreModal from '../components/ServerRestoreModal';
 import ImportModal from '../components/ImportModal';
 import { useTheme } from '../contexts/ThemeContext';
+import { getStorageStats, requestPersistentStorage, checkPersistence, StorageStats, formatBytes } from '../services/storageService';
 
 const GOOGLE_ICON = `<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path><path fill="none" d="M0 0h48v48H0z"></path></svg>`;
 
@@ -49,7 +50,11 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
     
     // Data State
     const [autoBackupEnabled, setAutoBackupEnabled] = useState(true);
-    const [storageEstimate, setStorageEstimate] = useState<{ usage: number, quota: number } | null>(null);
+    const [lowDataMode, setLowDataMode] = useState(false);
+    const [backupApiKey, setBackupApiKey] = useState('');
+    const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+    const [networkStats, setNetworkStats] = useState({ total: 0, session: 0 });
+    const [isPersisted, setIsPersisted] = useState(false);
     const [startPage, setStartPage] = useState(localStorage.getItem('start_page') || 'dashboard');
     const [selectedProvider, setSelectedProvider] = useState<SyncProvider>('google_drive');
     
@@ -82,6 +87,12 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
             const setting = await db.settings.get(AUTO_BACKUP_ENABLED_ID);
             setAutoBackupEnabled(setting?.value !== false);
             
+            const lowDataSetting = await db.settings.get(LOW_DATA_MODE_ID);
+            setLowDataMode(lowDataSetting?.value === true);
+            
+            const apiKeySetting = await db.settings.get(BACKUP_API_KEY_ID);
+            setBackupApiKey(apiKeySetting?.value || '');
+
             const providerSetting = await db.settings.get('syncProvider');
             if (providerSetting) {
                 setSelectedProvider(providerSetting.value);
@@ -93,22 +104,16 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
             setCustomApiKey(creds.apiKey);
         };
         
-        const checkStorage = async () => {
-            if (navigator.storage && navigator.storage.estimate) {
-                try {
-                    const estimate = await navigator.storage.estimate();
-                    setStorageEstimate({ 
-                        usage: estimate.usage || 0, 
-                        quota: estimate.quota || 0 
-                    });
-                } catch (e) {
-                    console.warn("Storage estimate failed", e);
-                }
-            }
+        const updateStorageInfo = async () => {
+             const stats = await getStorageStats();
+             setStorageStats(stats);
+             const persisted = await checkPersistence();
+             setIsPersisted(persisted);
+             setNetworkStats(getNetworkStats());
         };
 
         fetchSettings();
-        checkStorage();
+        updateStorageInfo();
 
         return () => {
             unsubDrive();
@@ -122,11 +127,38 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
         const isEnabled = e.target.checked;
         setAutoBackupEnabled(isEnabled);
         await db.settings.put({ id: AUTO_BACKUP_ENABLED_ID, value: isEnabled });
-        if (isEnabled) {
+        if (isEnabled && backupApiKey) {
             toastService.success('Automatic server backups enabled.');
             manualTriggerBackup();
+        } else if (isEnabled && !backupApiKey) {
+            toastService.info('Auto-sync enabled, but Backup API Key is missing.');
         } else {
             toastService.info('Automatic server backups disabled.');
+        }
+    };
+
+    const handleSaveBackupApiKey = async () => {
+        await db.settings.put({ id: BACKUP_API_KEY_ID, value: backupApiKey.trim() });
+        toastService.success("Backup API Key saved.");
+        if (autoBackupEnabled && backupApiKey.trim()) {
+            manualTriggerBackup();
+        }
+    };
+    
+    const handleLowDataModeToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const isEnabled = e.target.checked;
+        setLowDataMode(isEnabled);
+        await db.settings.put({ id: LOW_DATA_MODE_ID, value: isEnabled });
+        toastService.info(isEnabled ? "Low Data Mode enabled. Images will not be synced." : "Low Data Mode disabled.");
+    };
+    
+    const handleRequestPersistence = async () => {
+        const granted = await requestPersistentStorage();
+        setIsPersisted(granted);
+        if (granted) {
+            toastService.success("Persistent storage granted. Your data is less likely to be cleared by the browser.");
+        } else {
+            toastService.info("Browser denied persistent storage request. It may already be granted or requires more usage.");
         }
     };
 
@@ -296,6 +328,10 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
     // --- Server Backup Handlers ---
 
     const handleServerRestoreCheck = async () => {
+        if (!backupApiKey) {
+            toastService.error("Please configure your Backup API Key first.");
+            return;
+        }
         setIsLoading(true);
         setLoadingMessage('Checking for server backups...');
         try {
@@ -310,6 +346,32 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
             toastService.error(`Failed to list server backups: ${e.message}`);
         } finally {
             setIsLoading(false);
+        }
+    };
+    
+    const handleCreateCloudSnapshot = async () => {
+        if (!backupApiKey) {
+            toastService.error("Please configure your Backup API Key first.");
+            return;
+        }
+        const name = await modalService.prompt({
+            title: "Create Cloud Snapshot",
+            message: "Enter a name for this snapshot. It will be saved permanently on the server.",
+            inputLabel: "Snapshot Name",
+            confirmText: "Create"
+        });
+        
+        if (name) {
+            setIsLoading(true);
+            setLoadingMessage('Uploading snapshot...');
+            try {
+                await createCloudSnapshot(name);
+                toastService.success("Cloud snapshot created!");
+            } catch(e: any) {
+                toastService.error(`Failed to create snapshot: ${e.message}`);
+            } finally {
+                setIsLoading(false);
+            }
         }
     };
 
@@ -332,8 +394,47 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
             setIsLoading(false);
         }
     };
+
+    const handleServerDownload = async (backupId: string) => {
+        setIsLoading(true);
+        setLoadingMessage('Downloading backup...');
+        try {
+            const content = await fetchBackupContent(backupId);
+            if (content) {
+                const blob = new Blob([content], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                
+                let filename = backupId;
+                if (filename.endsWith('.gz')) {
+                    filename = filename.slice(0, -3);
+                }
+                if (!filename.endsWith('.json')) {
+                    filename += '.json';
+                }
+                
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                toastService.success('Backup downloaded successfully!');
+            } else {
+                throw new Error("Empty backup content.");
+            }
+        } catch (e: any) {
+            toastService.error(`Download failed: ${e.message}`);
+        } finally {
+            setIsLoading(false);
+        }
+    };
     
     const handleForceUpload = async () => {
+        if (!backupApiKey) {
+            toastService.error("Please configure your Backup API Key first.");
+            return;
+        }
         setIsLoading(true);
         setLoadingMessage('Force uploading to server...');
         try {
@@ -348,6 +449,10 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
     };
 
     const handleForceDownload = async () => {
+        if (!backupApiKey) {
+            toastService.error("Please configure your Backup API Key first.");
+            return;
+        }
         setIsLoading(true);
         setLoadingMessage('Checking server for latest backup...');
         try {
@@ -416,6 +521,7 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                 onClose={() => setIsServerRestoreModalOpen(false)}
                 backups={serverBackups}
                 onRestore={performServerRestore}
+                onDownload={handleServerDownload}
             />
 
             <ImportModal 
@@ -496,14 +602,21 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                     <Icon name="INFO" className="text-blue-500" />
                                     <h3 className="font-bold text-blue-700 dark:text-blue-300">Storage Usage</h3>
                                 </div>
-                                {storageEstimate ? (
+                                {storageStats ? (
                                     <div className="space-y-2">
                                         <div className="w-full bg-blue-200 dark:bg-blue-900 rounded-full h-2.5">
-                                            <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${(storageEstimate.usage / storageEstimate.quota) * 100}%` }}></div>
+                                            <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${storageStats.percentUsed}%` }}></div>
                                         </div>
-                                        <p className="text-xs text-blue-600 dark:text-blue-400">
-                                            Using {(storageEstimate.usage / 1024 / 1024).toFixed(2)} MB of {(storageEstimate.quota / 1024 / 1024).toFixed(0)} MB available.
-                                        </p>
+                                        <div className="flex justify-between items-center">
+                                            <p className="text-xs text-blue-600 dark:text-blue-400">
+                                                Using {formatBytes(storageStats.usage)} of {formatBytes(storageStats.quota)} available.
+                                            </p>
+                                            {!isPersisted && (
+                                                <button onClick={handleRequestPersistence} className="text-xs font-semibold text-blue-700 dark:text-blue-300 hover:underline">
+                                                    Enable Persistence
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 ) : (
                                     <p className="text-sm text-blue-600 dark:text-blue-400">Storage estimate unavailable.</p>
@@ -536,6 +649,16 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                     <button onClick={handleRestoreClick} className="text-sm font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300">Select File &rarr;</button>
                                 </div>
                             </div>
+                            
+                            <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-xl border border-zinc-200 dark:border-zinc-700 flex justify-between items-center">
+                                <div>
+                                    <h3 className="font-bold text-zinc-800 dark:text-zinc-100">Create Cloud Snapshot</h3>
+                                    <p className="text-sm text-zinc-500 dark:text-zinc-400">Save a permanent restore point to the server.</p>
+                                </div>
+                                <button onClick={handleCreateCloudSnapshot} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors">
+                                    Create Snapshot
+                                </button>
+                            </div>
 
                             <div className="border-t border-zinc-100 dark:border-zinc-700 pt-6">
                                 <h3 className="font-bold text-zinc-800 dark:text-zinc-100 mb-4">Import Content</h3>
@@ -555,7 +678,6 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                         <div className="space-y-8">
                             <div>
                                 <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-100 mb-4">Personal Cloud Storage</h2>
-                                
                                 <div className="mb-6">
                                     <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">Select Provider</label>
                                     <select
@@ -568,7 +690,6 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                         <option value="onedrive" disabled>OneDrive (Coming Soon)</option>
                                     </select>
                                 </div>
-
                                 {selectedProvider === 'google_drive' && (
                                     <>
                                     {driveStatus === 'unconfigured' ? (
@@ -576,22 +697,11 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                             <p className="text-sm text-zinc-600 dark:text-zinc-400">Configure your Google Cloud credentials to enable Drive sync.</p>
                                             <div>
                                                 <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Client ID</label>
-                                                <input 
-                                                    type="text" 
-                                                    value={customClientId} 
-                                                    onChange={e => setCustomClientId(e.target.value)} 
-                                                    className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
-                                                    placeholder="apps.googleusercontent.com"
-                                                />
+                                                <input type="text" value={customClientId} onChange={e => setCustomClientId(e.target.value)} className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm" placeholder="apps.googleusercontent.com"/>
                                             </div>
                                             <div>
                                                 <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">API Key</label>
-                                                <input 
-                                                    type="text" 
-                                                    value={customApiKey} 
-                                                    onChange={e => setCustomApiKey(e.target.value)} 
-                                                    className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
-                                                />
+                                                <input type="text" value={customApiKey} onChange={e => setCustomApiKey(e.target.value)} className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"/>
                                             </div>
                                             <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-indigo-700">Save & Connect</button>
                                         </form>
@@ -605,50 +715,47 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                                         <p className="text-xs text-zinc-500 dark:text-zinc-400">{isSignedIn ? `Connected as ${user?.name}` : 'Not connected'}</p>
                                                     </div>
                                                 </div>
-                                                {isSignedIn ? (
-                                                    <button onClick={signOut} className="text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400">Sign Out</button>
-                                                ) : (
-                                                    <button onClick={requestManualSignIn} className="text-sm font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400">Connect</button>
-                                                )}
+                                                {isSignedIn ? <button onClick={signOut} className="text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400">Sign Out</button> : <button onClick={requestManualSignIn} className="text-sm font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400">Connect</button>}
                                             </div>
-
                                             {isSignedIn && (
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                                    <button onClick={handleGoogleDriveBackup} className="flex items-center justify-center space-x-2 p-3 border border-zinc-200 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-colors">
-                                                        <Icon name="CLOUD" className="w-5 h-5 text-indigo-500" />
-                                                        <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Backup to Drive</span>
-                                                    </button>
-                                                    <button onClick={handleGoogleDriveRestore} className="flex items-center justify-center space-x-2 p-3 border border-zinc-200 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-colors">
-                                                        <Icon name="RESTORE" className="w-5 h-5 text-emerald-500" />
-                                                        <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Restore from Drive</span>
-                                                    </button>
+                                                    <button onClick={handleGoogleDriveBackup} className="flex items-center justify-center space-x-2 p-3 border border-zinc-200 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-colors"><Icon name="CLOUD" className="w-5 h-5 text-indigo-500" /><span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Backup to Drive</span></button>
+                                                    <button onClick={handleGoogleDriveRestore} className="flex items-center justify-center space-x-2 p-3 border border-zinc-200 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-colors"><Icon name="RESTORE" className="w-5 h-5 text-emerald-500" /><span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Restore from Drive</span></button>
                                                 </div>
                                             )}
-                                            
-                                            <div className="text-right">
-                                                <button onClick={handleDisconnectDrive} className="text-xs text-red-500 hover:underline">Remove Credentials</button>
-                                            </div>
+                                            <div className="text-right"><button onClick={handleDisconnectDrive} className="text-xs text-red-500 hover:underline">Remove Credentials</button></div>
                                         </div>
                                     )}
                                     </>
                                 )}
-                                
-                                {selectedProvider === 'dropbox' && (
-                                     <div className="p-6 bg-zinc-50 dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg text-center">
-                                        <p className="text-zinc-500 dark:text-zinc-400">Dropbox integration is coming soon.</p>
-                                     </div>
-                                )}
-                                
-                                {selectedProvider === 'onedrive' && (
-                                     <div className="p-6 bg-zinc-50 dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg text-center">
-                                        <p className="text-zinc-500 dark:text-zinc-400">OneDrive integration is coming soon.</p>
-                                     </div>
-                                )}
+                                {selectedProvider === 'dropbox' && <div className="p-6 bg-zinc-50 dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg text-center"><p className="text-zinc-500 dark:text-zinc-400">Dropbox integration is coming soon.</p></div>}
+                                {selectedProvider === 'onedrive' && <div className="p-6 bg-zinc-50 dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg text-center"><p className="text-zinc-500 dark:text-zinc-400">OneDrive integration is coming soon.</p></div>}
                             </div>
 
                             <div className="border-t border-zinc-100 dark:border-zinc-700 pt-6">
                                 <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-100 mb-4">Automatic App Backup</h2>
                                 <div className="space-y-4">
+                                    {/* API Key Input */}
+                                    <div className="space-y-2">
+                                        <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Backup Service API Key</label>
+                                        <div className="flex gap-2">
+                                            <input 
+                                                type="password" 
+                                                value={backupApiKey}
+                                                onChange={e => setBackupApiKey(e.target.value)}
+                                                className="flex-grow bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg p-2.5 text-sm"
+                                                placeholder="Enter your security key"
+                                            />
+                                            <button 
+                                                onClick={handleSaveBackupApiKey}
+                                                className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700"
+                                            >
+                                                Save Key
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Auto Backup Toggle */}
                                     <div className="flex items-center justify-between">
                                         <div>
                                             <p className="font-medium text-zinc-700 dark:text-zinc-200">Enable Auto-Backup</p>
@@ -658,6 +765,24 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                             <input type="checkbox" className="sr-only peer" checked={autoBackupEnabled} onChange={handleAutoBackupToggle} />
                                             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
                                         </label>
+                                    </div>
+                                    
+                                    {/* Low Data Mode Toggle */}
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="font-medium text-zinc-700 dark:text-zinc-200">Low Data Mode</p>
+                                            <p className="text-sm text-zinc-500 dark:text-zinc-400">Exclude large images from backups to save data.</p>
+                                        </div>
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" className="sr-only peer" checked={lowDataMode} onChange={handleLowDataModeToggle} />
+                                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                                        </label>
+                                    </div>
+
+                                    {/* Network Stats */}
+                                    <div className="bg-zinc-50 dark:bg-zinc-900 p-3 rounded-lg border border-zinc-200 dark:border-zinc-700 flex justify-between items-center text-sm">
+                                        <span className="text-zinc-600 dark:text-zinc-400">Network Usage (Session)</span>
+                                        <span className="font-bold text-zinc-800 dark:text-zinc-200">{formatBytes(networkStats.session)}</span>
                                     </div>
                                     
                                     <div className="flex items-center justify-between">

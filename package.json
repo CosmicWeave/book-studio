@@ -1,5 +1,5 @@
 {
-  "name": "ai-book-studio",
+  "name": "book-studio",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -38,7 +38,9 @@
     "marked": "^13.0.1",
     "turndown": "7.1.2",
     "pdfjs-dist": "^4.4.178",
-    "turndown-plugin-gfm": "^1.0.2"
+    "turndown-plugin-gfm": "^1.0.2",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.4"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

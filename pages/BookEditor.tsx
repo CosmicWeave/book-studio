@@ -28,6 +28,9 @@ import ImageSuggestionModal from '../components/editor/ImageSuggestionModal';
 import { Editor } from '@tiptap/core';
 import AudiobookDownloadModal from '../components/editor/AudiobookDownloadModal';
 import TextToImageModal from '../components/editor/TextToImageModal';
+import CharacterVoiceAnalysisModal from '../components/editor/CharacterVoiceAnalysisModal';
+import PlotHoleAnalysisModal from '../components/editor/PlotHoleAnalysisModal';
+import LoreConsistencyModal from '../components/editor/LoreConsistencyModal';
 
 interface BookEditorProps {
   onSave: () => void;
@@ -100,7 +103,21 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
         suggestionToGenerate,
         isDownloadModalOpen,
         isAiEnabled,
-        isTextToImageModalOpen
+        isTextToImageModalOpen,
+        isCharacterVoiceAnalysisModalOpen,
+        setIsCharacterVoiceAnalysisModalOpen,
+        characterVoiceAnalysisResult,
+        isAnalyzingCharacterVoice,
+        handleApplyCharacterVoiceSuggestion,
+        isPlotHoleModalOpen,
+        setIsPlotHoleModalOpen,
+        plotHoleResults,
+        isAnalyzingPlotHoles,
+        isLoreConsistencyModalOpen,
+        setIsLoreConsistencyModalOpen,
+        loreConsistencyResults,
+        isAnalyzingLore,
+        handleApplyLoreSuggestion
     } = useBookEditor();
   
     const { registerCommands, unregisterCommands } = useCommandPalette();
@@ -321,6 +338,35 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
               onApplySuggestion={handleApplyShowTellSuggestion}
           />
       )}
+      
+      {isCharacterVoiceAnalysisModalOpen && book && (
+          <CharacterVoiceAnalysisModal
+              isOpen={isCharacterVoiceAnalysisModalOpen}
+              onClose={() => setIsCharacterVoiceAnalysisModalOpen(false)}
+              results={characterVoiceAnalysisResult}
+              isLoading={isAnalyzingCharacterVoice}
+              onApplySuggestion={handleApplyCharacterVoiceSuggestion}
+          />
+      )}
+      
+      {isPlotHoleModalOpen && book && (
+          <PlotHoleAnalysisModal
+              isOpen={isPlotHoleModalOpen}
+              onClose={() => setIsPlotHoleModalOpen(false)}
+              results={plotHoleResults}
+              isLoading={isAnalyzingPlotHoles}
+          />
+      )}
+      
+      {isLoreConsistencyModalOpen && book && (
+          <LoreConsistencyModal
+              isOpen={isLoreConsistencyModalOpen}
+              onClose={() => setIsLoreConsistencyModalOpen(false)}
+              results={loreConsistencyResults}
+              isLoading={isAnalyzingLore}
+              onApplySuggestion={handleApplyLoreSuggestion}
+          />
+      )}
 
       {isMacroResultModalOpen && (
         <MacroResultModal
@@ -345,7 +391,7 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
       {suggestionToGenerate && <ImageSuggestionModal />}
       
       {isDownloadModalOpen && <AudiobookDownloadModal />}
-
+      
       {isTextToImageModalOpen && <TextToImageModal />}
       
       <KnowledgeBaseModal isOpen={isKnowledgeBaseOpen} onClose={() => setIsKnowledgeBaseOpen(false)} />

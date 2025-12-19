@@ -13,6 +13,7 @@ import SeriesPanel from './panels/SeriesPanel';
 import MacrosPanel from './panels/MacrosPanel';
 import ImageSuggestionsPanel from './panels/ImageSuggestionsPanel';
 import FindReplacePanel from './panels/FindReplacePanel';
+import AIAssistantPanel from './panels/AIAssistantPanel';
 import Icon from '../Icon';
 
 interface EditorSidebarProps {
@@ -27,7 +28,9 @@ const EditorSidebar: React.FC<EditorSidebarProps> = ({ onSaveAndClose }) => {
         handleAnalyzeCharacterVoice, 
         isAnalyzingCharacterVoice,
         handleAnalyzePlotHoles,
-        isAnalyzingPlotHoles
+        isAnalyzingPlotHoles,
+        handleAnalyzeLoreConsistency,
+        isAnalyzingLore
     } = useBookEditor();
 
     if (!book) return null;
@@ -52,6 +55,8 @@ const EditorSidebar: React.FC<EditorSidebarProps> = ({ onSaveAndClose }) => {
                         </div>
                         
                         <div className="grid gap-4">
+                            {isAiEnabled && <AIAssistantPanel />}
+                            
                             <FindReplacePanel />
                             
                             {isAiEnabled && (
@@ -89,6 +94,24 @@ const EditorSidebar: React.FC<EditorSidebarProps> = ({ onSaveAndClose }) => {
                                             </span>
                                         </div>
                                         <Icon name="CHEVRON_RIGHT" className="w-4 h-4 text-zinc-400 group-hover:text-amber-500 transition-colors" />
+                                    </button>
+                                </div>
+
+                                <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 overflow-hidden transition-all duration-200 hover:shadow-md hover:border-teal-200 dark:hover:border-teal-900/50">
+                                    <button 
+                                        onClick={handleAnalyzeLoreConsistency}
+                                        disabled={isAnalyzingLore}
+                                        className="w-full flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-zinc-700/30 transition-colors group disabled:opacity-50"
+                                    >
+                                        <div className="flex items-center space-x-3">
+                                            <div className="p-2 bg-teal-50 dark:bg-teal-900/30 rounded-lg text-teal-600 dark:text-teal-400 group-hover:scale-110 transition-transform">
+                                                <Icon name={isAnalyzingLore ? "ROTATE_CW" : "BRAIN"} className={`w-4 h-4 ${isAnalyzingLore ? 'animate-spin' : ''}`} />
+                                            </div>
+                                            <span className="font-semibold text-zinc-800 dark:text-zinc-100 text-sm">
+                                                {isAnalyzingLore ? 'Analyzing...' : 'Check Lore Consistency'}
+                                            </span>
+                                        </div>
+                                        <Icon name="CHEVRON_RIGHT" className="w-4 h-4 text-zinc-400 group-hover:text-teal-500 transition-colors" />
                                     </button>
                                 </div>
                                 </>

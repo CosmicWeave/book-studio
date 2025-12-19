@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import * as TiptapReact from '@tiptap/react';
 import { Editor } from '@tiptap/core';
 import Icon from '../Icon';
@@ -30,40 +30,40 @@ const TableBubbleMenu: React.FC<TableBubbleMenuProps> = ({ editor }) => {
         >
             {/* Row Controls */}
             <div className="flex items-center p-1 border-r border-zinc-200 dark:border-zinc-700 gap-1">
-                 <button onClick={() => editor.chain().focus().addRowBefore().run()} className={buttonClass} title="Add Row Before">
+                 <button onClick={() => (editor.chain().focus() as any).addRowBefore().run()} className={buttonClass} title="Add Row Before">
                     <Icon name="ROW_PLUS" className="w-4 h-4 rotate-180" />
                  </button>
-                 <button onClick={() => editor.chain().focus().addRowAfter().run()} className={buttonClass} title="Add Row After">
+                 <button onClick={() => (editor.chain().focus() as any).addRowAfter().run()} className={buttonClass} title="Add Row After">
                     <Icon name="ROW_PLUS" className="w-4 h-4" />
                  </button>
-                 <button onClick={() => editor.chain().focus().deleteRow().run()} className={deleteButtonClass} title="Delete Row">
+                 <button onClick={() => (editor.chain().focus() as any).deleteRow().run()} className={deleteButtonClass} title="Delete Row">
                     <Icon name="DELETE_ROW" className="w-4 h-4" />
                  </button>
             </div>
 
             {/* Column Controls */}
             <div className="flex items-center p-1 border-r border-zinc-200 dark:border-zinc-700 gap-1">
-                 <button onClick={() => editor.chain().focus().addColumnBefore().run()} className={buttonClass} title="Add Col Before">
+                 <button onClick={() => (editor.chain().focus() as any).addColumnBefore().run()} className={buttonClass} title="Add Col Before">
                     <Icon name="COL_PLUS" className="w-4 h-4 rotate-180" />
                  </button>
-                 <button onClick={() => editor.chain().focus().addColumnAfter().run()} className={buttonClass} title="Add Col After">
+                 <button onClick={() => (editor.chain().focus() as any).addColumnAfter().run()} className={buttonClass} title="Add Col After">
                     <Icon name="COL_PLUS" className="w-4 h-4" />
                  </button>
-                 <button onClick={() => editor.chain().focus().deleteColumn().run()} className={deleteButtonClass} title="Delete Column">
+                 <button onClick={() => (editor.chain().focus() as any).deleteColumn().run()} className={deleteButtonClass} title="Delete Column">
                     <Icon name="DELETE_COL" className="w-4 h-4" />
                  </button>
             </div>
 
             {/* Cell Controls */}
              <div className="flex items-center p-1 gap-1">
-                 <button onClick={() => editor.chain().focus().mergeCells().run()} className={buttonClass} title="Merge Cells">
+                 <button onClick={() => (editor.chain().focus() as any).mergeCells().run()} className={buttonClass} title="Merge Cells">
                     <Icon name="MERGE" className="w-4 h-4" />
                  </button>
-                 <button onClick={() => editor.chain().focus().splitCell().run()} className={buttonClass} title="Split Cell">
+                 <button onClick={() => (editor.chain().focus() as any).splitCell().run()} className={buttonClass} title="Split Cell">
                     <Icon name="MERGE" className="w-4 h-4 rotate-90" />
                  </button>
                  <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-                 <button onClick={() => editor.chain().focus().deleteTable().run()} className={deleteButtonClass} title="Delete Table">
+                 <button onClick={() => (editor.chain().focus() as any).deleteTable().run()} className={deleteButtonClass} title="Delete Table">
                     <Icon name="TRASH" className="w-4 h-4" />
                  </button>
             </div>

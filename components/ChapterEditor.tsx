@@ -29,6 +29,115 @@ import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { marked } from 'marked';
 import Icon from './Icon';
+import { Extension } from '@tiptap/core';
+import { Plugin, PluginKey } from 'prosemirror-state';
+import { Decoration, DecorationSet } from 'prosemirror-view';
+import * as gemini from '../services/gemini';
+
+// --- Ghost Text Extension ---
+const GhostText = Extension.create({
+    name: 'ghostText',
+
+    addOptions() {
+        return {
+            enabled: false,
+            bookInstructions: '',
+        };
+    },
+
+    addProseMirrorPlugins() {
+        let timeout: any;
+        const pluginKey = new PluginKey('ghostText');
+
+        return [
+            new Plugin({
+                key: pluginKey,
+                state: {
+                    init() {
+                        return { decoration: null, suggestion: null, loading: false };
+                    },
+                    apply(tr, value) {
+                        const action = tr.getMeta(pluginKey);
+                        if (action && action.type === 'setSuggestion') {
+                            if (!action.suggestion) return { decoration: null, suggestion: null, loading: false };
+                            const pos = tr.selection.from;
+                            const widget = document.createElement('span');
+                            widget.textContent = action.suggestion;
+                            widget.className = 'ghost-text opacity-50 pointer-events-none text-zinc-400 font-serif italic ml-1';
+                            return {
+                                decoration: DecorationSet.create(tr.doc, [Decoration.widget(pos, widget, { side: 1 })]),
+                                suggestion: action.suggestion,
+                                loading: false
+                            };
+                        }
+                        if (action && action.type === 'clear') {
+                            return { decoration: null, suggestion: null, loading: false };
+                        }
+                        // Clear on typing
+                        if (tr.docChanged) {
+                            return { decoration: null, suggestion: null, loading: false };
+                        }
+                        return {
+                            decoration: value.decoration?.map(tr.mapping, tr.doc),
+                            suggestion: value.suggestion,
+                            loading: value.loading
+                        };
+                    },
+                },
+                props: {
+                    decorations(state) {
+                        return this.getState(state).decoration;
+                    },
+                    handleKeyDown(view, event) {
+                        const state = this.getState(view.state);
+                        if (state.suggestion && event.key === 'Tab') {
+                            event.preventDefault();
+                            view.dispatch(view.state.tr.insertText(state.suggestion).setMeta(pluginKey, { type: 'clear' }));
+                            return true;
+                        }
+                        if (state.suggestion && (event.key === 'Escape' || event.key.length === 1)) {
+                            // Clear on Escape or typing
+                            view.dispatch(view.state.tr.setMeta(pluginKey, { type: 'clear' }));
+                        }
+                        return false;
+                    },
+                },
+                view(editorView) {
+                    return {
+                        update: (view, prevState) => {
+                            if (!this.options.enabled) return;
+                            
+                            const state = pluginKey.getState(view.state);
+                            if (state.suggestion || state.loading) return;
+
+                            // Debounce fetch
+                            clearTimeout(timeout);
+                            if (view.state.doc.content.size > 0 && !view.state.selection.empty) return;
+
+                            timeout = setTimeout(async () => {
+                                const { from } = view.state.selection;
+                                const textBefore = view.state.doc.textBetween(Math.max(0, from - 1000), from, ' ');
+                                
+                                // Simple heuristic: only suggest if paused after sentence ending or newline
+                                if (textBefore.trim().length > 10) {
+                                    try {
+                                        // Set loading state if needed (optional UI feedback)
+                                        const suggestion = await gemini.predictNextText(textBefore, this.options.bookInstructions);
+                                        if (suggestion && view.dom) { // Check view.dom to ensure editor wasn't destroyed
+                                            view.dispatch(view.state.tr.setMeta(pluginKey, { type: 'setSuggestion', suggestion }));
+                                        }
+                                    } catch (e) {
+                                        // Silent fail
+                                    }
+                                }
+                            }, 2000); // 2s delay
+                        },
+                    };
+                },
+            }),
+        ];
+    },
+});
 
 interface ChapterEditorProps {
     chapter: ChapterContent;
@@ -40,7 +149,7 @@ interface ChapterEditorProps {
 
 const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, chapterIndex, onUpdate, onEditImage, isGenerating }) => {
     const editorRef = useRef<HTMLDivElement>(null);
-    const { setActiveEditorInstance, registerEditor, unregisterEditor, activeEditorInstance } = useBookEditor();
+    const { setActiveEditorInstance, registerEditor, unregisterEditor, activeEditorInstance, isAutocompleteEnabled, book } = useBookEditor();
     
     const [viewMode, setViewMode] = useState<'visual' | 'markdown' | 'html'>('visual');
     const [textContent, setTextContent] = useState(''); 
@@ -93,7 +202,11 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, chapterIndex, on
         Highlight.configure({ multicolor: true }),
         BubbleMenu,
         FloatingMenu,
-    ], []);
+        GhostText.configure({
+            enabled: isAutocompleteEnabled,
+            bookInstructions: book?.instructions || '',
+        }),
+    ], [isAutocompleteEnabled, book?.instructions]);
 
     const editorProps = useMemo(() => ({
         attributes: {
@@ -127,6 +240,17 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, chapterIndex, on
             return () => unregisterEditor(chapterIndex);
         }
     }, [editor, chapterIndex, registerEditor, unregisterEditor]);
+
+    // Update GhostText options dynamically
+    useEffect(() => {
+        if (editor && !editor.isDestroyed) {
+            // Reconfigure isn't always straightforward with Tiptap/ProseMirror plugins without reload
+            // But we can recreate the editor instance via the dependency array of useEditor above
+            // However, useEditor destroys and recreates if dependencies change. 
+            // The dependency array `[extensions, editorProps]` includes `isAutocompleteEnabled`.
+            // So this handles the update automatically.
+        }
+    }, [isAutocompleteEnabled, book?.instructions]);
 
     // Apply/remove the 'is-ai-writing' class for visual feedback
     useEffect(() => {
@@ -240,9 +364,6 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, chapterIndex, on
         if (viewMode === 'html') {
             onUpdate(val);
         } else if (viewMode === 'markdown') {
-            // We don't constantly parse markdown to HTML for the update because it might be partial.
-            // But we should probably debounce update the model content so "Save" works.
-            // For now, let's update on change for consistency with visual mode.
             const html = await marked.parse(val);
             onUpdate(html);
         }

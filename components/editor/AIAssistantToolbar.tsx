@@ -40,28 +40,28 @@ const AIAssistantToolbar: React.FC<AIAssistantToolbarProps> = ({ editor }) => {
       <div className="bg-white dark:bg-gray-800 p-1.5 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 flex items-center gap-1">
         {/* Basic Formatting */}
         <button 
-            onClick={() => editor.chain().focus().toggleBold().run()} 
+            onClick={() => (editor.chain().focus() as any).toggleBold().run()} 
             className={`${buttonClass} ${editor.isActive('bold') ? activeClass : ''}`} 
             title="Bold"
         >
              <Icon name="BOLD" className="w-4 h-4" />
         </button>
         <button 
-            onClick={() => editor.chain().focus().toggleItalic().run()} 
+            onClick={() => (editor.chain().focus() as any).toggleItalic().run()} 
             className={`${buttonClass} ${editor.isActive('italic') ? activeClass : ''}`} 
             title="Italic"
         >
              <Icon name="ITALIC" className="w-4 h-4" />
         </button>
         <button 
-            onClick={() => editor.chain().focus().toggleUnderline().run()} 
+            onClick={() => (editor.chain().focus() as any).toggleUnderline().run()} 
             className={`${buttonClass} ${editor.isActive('underline') ? activeClass : ''}`} 
             title="Underline"
         >
              <Icon name="UNDERLINE" className="w-4 h-4" />
         </button>
         <button 
-            onClick={() => editor.chain().focus().toggleHighlight().run()} 
+            onClick={() => (editor.chain().focus() as any).toggleHighlight().run()} 
             className={`${buttonClass} ${editor.isActive('highlight') ? activeClass : ''}`} 
             title="Highlight"
         >

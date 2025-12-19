@@ -1,6 +1,6 @@
 
 import React, { createContext, useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
-import { Book, ChapterContent, ChapterOutline, BookSnapshot, Macro, InstructionTemplate, AnalysisResult, StyleSuggestion, PacingAnalysisResult, ShowTellAnalysisResult, MacroResult, KnowledgeSheet, ChatMessage, ImageSuggestion, Scene, CharacterVoiceInconsistency, PlotHole } from '../types';
+import { Book, ChapterContent, ChapterOutline, BookSnapshot, Macro, InstructionTemplate, AnalysisResult, StyleSuggestion, PacingAnalysisResult, ShowTellAnalysisResult, MacroResult, KnowledgeSheet, ChatMessage, ImageSuggestion, Scene, CharacterVoiceInconsistency, PlotHole, LoreInconsistency, CustomPersona } from '../types';
 import { db } from '../services/db';
 import * as gemini from '../services/gemini';
 import { toastService } from '../services/toastService';
@@ -126,6 +126,22 @@ interface BookEditorContextType {
     plotHoleResults: PlotHole[] | null;
     isAnalyzingPlotHoles: boolean;
     handleAnalyzePlotHoles: () => void;
+    
+    // Lore Consistency Analysis
+    isLoreConsistencyModalOpen: boolean;
+    setIsLoreConsistencyModalOpen: (isOpen: boolean) => void;
+    loreConsistencyResults: LoreInconsistency[] | null;
+    isAnalyzingLore: boolean;
+    handleAnalyzeLoreConsistency: () => void;
+    handleApplyLoreSuggestion: (original: string, replacement: string) => void;
+
+    // AI Assistant Config
+    handleUpdatePersona: (persona: string) => void;
+    isAutocompleteEnabled: boolean;
+    toggleAutocomplete: () => void;
+    customPersonas: CustomPersona[];
+    addCustomPersona: (persona: Omit<CustomPersona, 'id'>) => Promise<void>;
+    deleteCustomPersona: (id: string) => Promise<void>;
 
     // Chat
     isChatOpen: boolean;
@@ -265,6 +281,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const [isTextToImageModalOpen, setIsTextToImageModalOpen] = useState(false);
     const [isCharacterVoiceAnalysisModalOpen, setIsCharacterVoiceAnalysisModalOpen] = useState(false);
     const [isPlotHoleModalOpen, setIsPlotHoleModalOpen] = useState(false);
+    const [isLoreConsistencyModalOpen, setIsLoreConsistencyModalOpen] = useState(false);
     
     const [textToImageContext, setTextToImageContext] = useState<{ text: string; from: number; to: number } | null>(null);
 
@@ -300,6 +317,9 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const [plotHoleResults, setPlotHoleResults] = useState<PlotHole[] | null>(null);
     const [isAnalyzingPlotHoles, setIsAnalyzingPlotHoles] = useState(false);
     
+    const [loreConsistencyResults, setLoreConsistencyResults] = useState<LoreInconsistency[] | null>(null);
+    const [isAnalyzingLore, setIsAnalyzingLore] = useState(false);
+    
     const [chatMessages, setChatMessages] = useState<Content[] | null>(null);
     const [isChatLoading, setIsChatLoading] = useState(false);
     
@@ -307,6 +327,9 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const [isAnalyzingPlan, setIsAnalyzingPlan] = useState<number | null>(null);
     
     const [downloadModalInitialSelection, setDownloadModalInitialSelection] = useState<number[]>([]);
+    
+    const [isAutocompleteEnabled, setIsAutocompleteEnabled] = useState(false); // Default off
+    const [customPersonas, setCustomPersonas] = useState<CustomPersona[]>([]);
 
     const geminiTTSVoices = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'];
 
@@ -345,6 +368,11 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                 
                 const snaps = await fetchSnapshotsForBook(bookId);
                 setSnapshots(snaps.sort((a, b) => b.createdAt - a.createdAt));
+                
+                const personaSetting = await db.settings.get('customPersonas');
+                if (personaSetting && Array.isArray(personaSetting.value)) {
+                    setCustomPersonas(personaSetting.value);
+                }
 
             } catch (e) {
                 console.error(e);
@@ -364,6 +392,13 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         });
         setSaveStatus('unsaved');
     };
+    
+    const getPersonaInstructionText = useCallback((personaName: string) => {
+        const defaultInst = gemini.PERSONA_INSTRUCTIONS[personaName];
+        if (defaultInst) return defaultInst;
+        const custom = customPersonas.find(p => p.name === personaName);
+        return custom ? custom.instructions : gemini.PERSONA_INSTRUCTIONS['Standard Co-Author'];
+    }, [customPersonas]);
 
     // --- DEFINITIONS FOR HANDLERS ---
     const handleUpdateInstructions = useCallback((newInstructions: string) => {
@@ -476,9 +511,9 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const handleDeleteSnapshot = async (id: string) => { await appDeleteSnapshot(id); const snaps = await fetchSnapshotsForBook(bookId); setSnapshots(snaps.sort((a, b) => b.createdAt - a.createdAt)); };
     const registerEditor = (index: number, editor: Editor) => { editorsRef.current.set(index, editor); };
     const unregisterEditor = (index: number) => editorsRef.current.delete(index);
-    const handleAssistantAction = async (action: 'rephrase' | 'expand' | 'summarize' | 'suggest' | { type: 'tone', tone: string }) => { if (!activeEditorInstance || isAssistantLoading) return; const { from, to } = activeEditorInstance.state.selection; const text = activeEditorInstance.state.doc.textBetween(from, to, ' '); const context = activeEditorInstance.getText(); if (!text && action !== 'suggest') { toastService.info("Please select some text first."); return; } setIsAssistantLoading(true); try { let result = ''; if (action === 'rephrase') result = await gemini.rephraseText(text, context); else if (action === 'expand') result = await gemini.expandText(text, context); else if (action === 'summarize') result = await gemini.summarizeText(text); else if (action === 'suggest') { const beforeCursor = activeEditorInstance.state.doc.textBetween(Math.max(0, from - 500), from, ' '); result = await gemini.suggestNextSentence(beforeCursor); } else if (typeof action === 'object' && action.type === 'tone') { result = await gemini.changeTone(text, action.tone, context); } if (result) { if (action === 'suggest') { activeEditorInstance.commands.insertContent(result); } else { activeEditorInstance.commands.insertContent(result); } } } catch (e: any) { toastService.error(`AI Action failed: ${e.message}`); } finally { setIsAssistantLoading(false); } };
+    const handleAssistantAction = async (action: 'rephrase' | 'expand' | 'summarize' | 'suggest' | { type: 'tone', tone: string }) => { if (!activeEditorInstance || isAssistantLoading) return; const { from, to } = activeEditorInstance.state.selection; const text = activeEditorInstance.state.doc.textBetween(from, to, ' '); const context = activeEditorInstance.getText(); if (!text && action !== 'suggest') { toastService.info("Please select some text first."); return; } setIsAssistantLoading(true); try { let result = ''; if (action === 'rephrase') result = await gemini.rephraseText(text, context); else if (action === 'expand') result = await gemini.expandText(text, context); else if (action === 'summarize') result = await gemini.summarizeText(text); else if (action === 'suggest') { const beforeCursor = activeEditorInstance.state.doc.textBetween(Math.max(0, from - 500), from, ' '); result = await gemini.predictNextText(beforeCursor, book?.instructions || ''); } else if (typeof action === 'object' && action.type === 'tone') { result = await gemini.changeTone(text, action.tone, context); } if (result) { if (action === 'suggest') { activeEditorInstance.commands.insertContent(result); } else { activeEditorInstance.commands.insertContent(result); } } } catch (e: any) { toastService.error(`AI Action failed: ${e.message}`); } finally { setIsAssistantLoading(false); } };
     const handleApplyEdit = useCallback((chapterIndex: number, newContent: string) => { if (!book) return; handleContentChange(chapterIndex, newContent); toastService.success("Changes applied to chapter."); }, [book, handleContentChange]);
-    const handleSendChatMessage = useCallback(async (msg: string) => { if(!book) return; setIsChatLoading(true); const newMsg: Content = { role: 'user', parts: [{ text: msg }] }; const updatedHistory = [...(chatMessages || []), newMsg]; setChatMessages(updatedHistory); try { const currentChapter = book.content[activeChapterIndex]; const contextData = { topic: book.topic, outline: book.outline, currentChapter: currentChapter ? { title: currentChapter.title, content: currentChapter.htmlContent } : undefined, knowledgeBase: book.knowledgeBase, seriesKnowledgeBase }; const responseHistory = await gemini.streamChatWithBook( msg, updatedHistory, contextData, (chunk) => { setChatMessages(prev => { if(!prev) return null; const last = prev[prev.length - 1]; if (last.role === 'model') { const text = last.parts[0].text || ''; return [...prev.slice(0, -1), { role: 'model', parts: [{ text: text + chunk }] }]; } else { return [...prev, { role: 'model', parts: [{ text: chunk }] }]; } }); }, (toolCall) => { setChatMessages(prev => [...(prev || []), { role: 'model', parts: [{ functionCall: toolCall }] }]); } ); setChatMessages(responseHistory); } catch(e: any) { toastService.error(e.message || String(e)); } finally { setIsChatLoading(false); } }, [book, chatMessages, activeChapterIndex, seriesKnowledgeBase]);
+    const handleSendChatMessage = useCallback(async (msg: string) => { if(!book) return; setIsChatLoading(true); const newMsg: Content = { role: 'user', parts: [{ text: msg }] }; const updatedHistory = [...(chatMessages || []), newMsg]; setChatMessages(updatedHistory); try { const currentChapter = book.content[activeChapterIndex]; const contextData = { topic: book.topic, outline: book.outline, currentChapter: currentChapter ? { title: currentChapter.title, content: currentChapter.htmlContent } : undefined, knowledgeBase: book.knowledgeBase, seriesKnowledgeBase }; const personaText = getPersonaInstructionText(book.aiPersona || 'Standard Co-Author'); const responseHistory = await gemini.streamChatWithBook( msg, updatedHistory, contextData, personaText, (chunk) => { setChatMessages(prev => { if(!prev) return null; const last = prev[prev.length - 1]; if (last.role === 'model') { const text = last.parts[0].text || ''; return [...prev.slice(0, -1), { role: 'model', parts: [{ text: text + chunk }] }]; } else { return [...prev, { role: 'model', parts: [{ text: chunk }] }]; } }); }, (toolCall) => { setChatMessages(prev => [...(prev || []), { role: 'model', parts: [{ functionCall: toolCall }] }]); } ); setChatMessages(responseHistory); } catch(e: any) { toastService.error(e.message || String(e)); } finally { setIsChatLoading(false); } }, [book, chatMessages, activeChapterIndex, seriesKnowledgeBase, getPersonaInstructionText]);
     const handleExecuteAnalysisAction = useCallback((prompt: string) => { setIsAnalysisModalOpen(false); setIsChatOpen(true); handleSendChatMessage(prompt); }, [handleSendChatMessage]);
     const handleOpenTextToImage = useCallback((editorOverride?: Editor) => { const editor = editorOverride || activeEditorInstance; if (!editor) { console.warn("No active editor instance found for Text to Image"); return; } if (editorOverride) { setActiveEditorInstance(editorOverride); } const { from, to } = editor.state.selection; const text = editor.state.doc.textBetween(from, to, ' '); if (!text.trim()) { toastService.info("Please select some text to describe the image."); return; } setTextToImageContext({ text, from, to }); setIsTextToImageModalOpen(true); }, [activeEditorInstance]);
     const handleInsertGeneratedImage = useCallback((imageUrl: string, prompt: string) => { if (!activeEditorInstance || !textToImageContext) return; activeEditorInstance.chain().focus().setTextSelection(textToImageContext.to).insertContent([ { type: 'paragraph' }, { type: 'image', attrs: { src: imageUrl, alt: prompt } }, { type: 'paragraph' } ]).run(); setIsTextToImageModalOpen(false); setTextToImageContext(null); }, [activeEditorInstance, textToImageContext]);
@@ -489,7 +524,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const closeImageSuggestionModal = () => { setSuggestionToGenerate(null); };
     const handleDownloadAudiobook = (chapterIndex?: number) => { if (chapterIndex !== undefined) { setDownloadModalInitialSelection([chapterIndex]); } else { setDownloadModalInitialSelection([]); } setIsDownloadModalOpen(true); };
     const handleBrainstormComplete = (outline: ChapterOutline[], finalTitle: string) => { if(!book) return; const newContent = outline.map(ch => { const existing = book.content.find(c => c && c.title === ch.title); return existing || { title: ch.title, htmlContent: '' }; }); setBook({ ...book, topic: finalTitle, outline, content: newContent }); setIsBrainstormModalOpen(false); setSaveStatus('unsaved'); toastService.success("Outline applied!"); };
-    const handleOpenAnalysisModal = async (index: number) => { if(!book) return; const content = book.content[index]?.htmlContent; if(!content) { toastService.info("Chapter is empty."); return; } setIsAnalysisModalOpen(true); setIsAnalyzing(true); setAnalysisData({ chapterIndex: index, result: null }); try { const tempDiv = document.createElement('div'); tempDiv.innerHTML = content; const res = await gemini.analyzeChapterContent(content, book, seriesKnowledgeBase); setAnalysisData({ chapterIndex: index, result: res }); } catch(e: any) { toastService.error(e.message); setIsAnalysisModalOpen(false); } finally { setIsAnalyzing(false); } };
+    const handleOpenAnalysisModal = async (index: number) => { if(!book) return; const content = book.content[index]?.htmlContent; if(!content) { toastService.info("Chapter is empty."); return; } setIsAnalysisModalOpen(true); setIsAnalyzing(true); setAnalysisData({ chapterIndex: index, result: null }); try { const tempDiv = document.createElement('div'); tempDiv.innerHTML = content; const personaText = getPersonaInstructionText(book.aiPersona || 'Standard Co-Author'); const res = await gemini.analyzeChapterContent(content, book, seriesKnowledgeBase, personaText); setAnalysisData({ chapterIndex: index, result: res }); } catch(e: any) { toastService.error(e.message); setIsAnalysisModalOpen(false); } finally { setIsAnalyzing(false); } };
     const handleAnalyzeChapterStyle = async (index: number) => { if(!book) return; setIsStyleAnalysisModalOpen(true); setIsAnalyzingStyle(true); setAnalyzingStyleChapterIndex(index); try { const res = await gemini.analyzeChapterStyle(book.content[index].htmlContent, book.topic, book.instructions); setStyleAnalysisResult(res); } catch(e: any) { toastService.error(e.message); setIsStyleAnalysisModalOpen(false); } finally { setIsAnalyzingStyle(false); } };
     const handleApplyStyleSuggestion = (original: string, replacement: string) => { if (analyzingStyleChapterIndex === null || !book) return; const content = book.content[analyzingStyleChapterIndex].htmlContent; const newContent = content.replace(original, replacement); handleContentChange(analyzingStyleChapterIndex, newContent); setStyleAnalysisResult(prev => prev ? prev.filter(s => s.originalPassage !== original) : null); toastService.success("Suggestion applied."); };
     const handleApplyShowTellSuggestion = (original: string, replacement: string) => { if (analysisData.chapterIndex === null || !book) return; const content = book.content[analysisData.chapterIndex].htmlContent; const newContent = content.replace(original, replacement); handleContentChange(analysisData.chapterIndex, newContent); if (deepAnalysisType === 'show_tell') { setDeepAnalysisResult((prev: any) => prev.filter((i: any) => i.passage !== original)); } toastService.success("Suggestion applied."); };
@@ -544,15 +579,12 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const handleApplyCharacterVoiceSuggestion = (original: string, replacement: string) => {
         if (!book) return;
         const content = book.content[activeChapterIndex].htmlContent;
-        // Careful replacement in HTML - might need more robust text search if HTML tags interfere
-        // For now, simple string replace.
         const newContent = content.replace(original, replacement);
         
         if (newContent === content) {
              toastService.error("Could not find exact match to replace in HTML. You may need to edit manually.");
         } else {
              handleContentChange(activeChapterIndex, newContent);
-             // Remove from list
              setCharacterVoiceAnalysisResult(prev => prev ? prev.filter(i => i.dialogue !== original) : null);
              toastService.success("Voice fix applied.");
         }
@@ -588,6 +620,73 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         }
     };
 
+    // --- Lore Consistency Handler ---
+    const handleAnalyzeLoreConsistency = async () => {
+        if (!book || !book.knowledgeBase || book.knowledgeBase.length === 0) {
+            toastService.error("No knowledge base to analyze against.");
+            return;
+        }
+        
+        const currentContent = book.content[activeChapterIndex]?.htmlContent || '';
+        if (!currentContent.trim()) {
+            toastService.info("Current chapter is empty.");
+            return;
+        }
+        
+        const plainText = currentContent.replace(/<[^>]*>/g, '');
+        
+        setIsLoreConsistencyModalOpen(true);
+        setIsAnalyzingLore(true);
+        setLoreConsistencyResults(null);
+        
+        try {
+            const results = await gemini.analyzeLoreConsistency(plainText, book.knowledgeBase);
+            setLoreConsistencyResults(results);
+        } catch (e: any) {
+            toastService.error(e.message);
+            setIsLoreConsistencyModalOpen(false);
+        } finally {
+            setIsAnalyzingLore(false);
+        }
+    };
+
+    const handleApplyLoreSuggestion = (original: string, replacement: string) => {
+        if (!book) return;
+        const content = book.content[activeChapterIndex].htmlContent;
+        const newContent = content.replace(original, replacement);
+        
+        if (newContent === content) {
+             toastService.error("Could not find exact match. Please edit manually.");
+        } else {
+             handleContentChange(activeChapterIndex, newContent);
+             setLoreConsistencyResults(prev => prev ? prev.filter(i => i.passage !== original) : null);
+             toastService.success("Lore fix applied.");
+        }
+    };
+
+    const handleUpdatePersona = (persona: string) => {
+        updateLocalBook({ aiPersona: persona });
+    };
+
+    const toggleAutocomplete = () => {
+        setIsAutocompleteEnabled(prev => !prev);
+    };
+
+    const addCustomPersona = async (persona: Omit<CustomPersona, 'id'>) => {
+        const newPersona = { ...persona, id: crypto.randomUUID() };
+        const updated = [...customPersonas, newPersona];
+        setCustomPersonas(updated);
+        await db.settings.put({ id: 'customPersonas', value: updated });
+        toastService.success("Custom persona added.");
+    };
+
+    const deleteCustomPersona = async (id: string) => {
+        const updated = customPersonas.filter(p => p.id !== id);
+        setCustomPersonas(updated);
+        await db.settings.put({ id: 'customPersonas', value: updated });
+        toastService.info("Persona deleted.");
+    };
+
     // Expose context
     const contextValue: BookEditorContextType = {
         book, isLoading, loadingMessage, saveStatus, isSyncing, activeChapterIndex, setActiveChapterIndex,
@@ -607,6 +706,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         isStyleAnalysisModalOpen, setIsStyleAnalysisModalOpen, styleAnalysisResult, analyzingStyleChapterIndex, isAnalyzingStyle, handleAnalyzeChapterStyle, handleApplyStyleSuggestion,
         isCharacterVoiceAnalysisModalOpen, setIsCharacterVoiceAnalysisModalOpen, characterVoiceAnalysisResult, isAnalyzingCharacterVoice, handleAnalyzeCharacterVoice, handleApplyCharacterVoiceSuggestion,
         isPlotHoleModalOpen, setIsPlotHoleModalOpen, plotHoleResults, isAnalyzingPlotHoles, handleAnalyzePlotHoles,
+        isLoreConsistencyModalOpen, setIsLoreConsistencyModalOpen, loreConsistencyResults, isAnalyzingLore, handleAnalyzeLoreConsistency, handleApplyLoreSuggestion,
         isChatOpen, setIsChatOpen, chatMessages, handleSendChatMessage, isChatLoading, handleApplyEdit, handleExecuteTool,
         activeEditorInstance, setActiveEditorInstance, registerEditor, unregisterEditor, handleAssistantAction, isAssistantLoading,
         handleAddChapter, handleDeleteChapter, handleMoveChapter, handleMergeChapters, handleUpdateChapterOutline,
@@ -618,7 +718,9 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         handleUpdateScene, handleAddScene, handleDeleteScene, handleMoveScene,
         geminiTTSVoices, audiobookState, handlePlayFullBook, handlePlayChapter, handleSetVoice: () => {}, handleUpdateVoiceStyle, handlePauseAudiobook: pauseAudiobook, handleResumeAudiobook: resumeAudiobook, handleStopAudiobook: stopAudiobook, handleSkipChapter: skipAudiobookChapter,
         isMetadataOpen, setIsMetadataOpen, isAiEnabled,
-        isTextToImageModalOpen, setIsTextToImageModalOpen, textToImageContext, handleOpenTextToImage, handleInsertGeneratedImage
+        isTextToImageModalOpen, setIsTextToImageModalOpen, textToImageContext, handleOpenTextToImage, handleInsertGeneratedImage,
+        handleUpdatePersona, isAutocompleteEnabled, toggleAutocomplete,
+        customPersonas, addCustomPersona, deleteCustomPersona
     };
 
     return (

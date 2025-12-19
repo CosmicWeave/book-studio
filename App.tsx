@@ -8,7 +8,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { db } from './services/db';
 import { initGoogleDriveService, attemptSilentSignIn } from './services/googleDrive';
 import { historyService } from './services/historyService';
-import { fetchLatestBackup, initBackupService } from './services/backupService';
+import { fetchLatestBackup, initBackupService, manualTriggerBackup } from './services/backupService';
 import { toastService } from './services/toastService';
 import { modalService } from './services/modalService';
 
@@ -41,6 +41,10 @@ import ErrorBoundary from './components/ErrorBoundary';
 import FloatingAudioPlayer from './components/FloatingAudioPlayer';
 import ImportModal from './components/ImportModal';
 import AudiobookGenerationIndicator from './components/AudiobookGenerationIndicator';
+import ConflictResolutionModal from './components/ConflictResolutionModal';
+import StorageAlert from './components/StorageAlert';
+import InstallPrompt from './components/InstallPrompt';
+import PullToRefresh from './components/PullToRefresh';
 
 const App: React.FC = () => {
     return (
@@ -70,6 +74,8 @@ const MainApp: React.FC = () => {
     const [readerBookId, setReaderBookId] = useState<string | null>(null);
     const [modalState, setModalState] = useState<ModalState | null>(null);
     const [isOffline, setIsOffline] = useState(!navigator.onLine);
+    const [isInit, setIsInit] = useState(false);
+    const [initError, setInitError] = useState<string | null>(null);
     
     // Server restore state
     const [showRestoreModal, setShowRestoreModal] = useState(false);
@@ -85,7 +91,10 @@ const MainApp: React.FC = () => {
     const [isCheckingForRestore, setIsCheckingForRestore] = useState(false);
 
     // Scroll restoration ref
-    const mainScrollRef = useRef<HTMLElement>(null);
+    const mainScrollRef = useRef<HTMLDivElement>(null);
+    
+    // Swipe handling refs
+    const touchStartX = useRef<number | null>(null);
 
     // Stable navigation callback to prevent re-renders
     const navigateHome = useCallback(() => {
@@ -100,8 +109,38 @@ const MainApp: React.FC = () => {
             await initBackupService();
             await initGoogleDriveService();
             attemptSilentSignIn();
+            
+            // Check for Shared Content from PWA Share Target
+            if ('caches' in window) {
+                try {
+                    const cache = await caches.open('share-target-cache');
+                    const response = await cache.match('/shared-content');
+                    if (response) {
+                        const data = await response.json();
+                        await cache.delete('/shared-content'); // Consume it
+                        
+                        if (data.text || data.url) {
+                            const content = `${data.text}\n\n${data.url}`;
+                            const newDocId = await createNewDocument(data.title || 'Shared Content');
+                            // Update content immediately
+                            const doc = await db.documents.get(newDocId);
+                            if (doc) {
+                                await db.documents.put({ ...doc, content: `<p>${content.replace(/\n/g, '<br/>')}</p>` });
+                                toastService.success("Created document from shared content");
+                                navigate(`/documents/${newDocId}`);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Error checking for shared content", e);
+                }
+            }
+
           } catch (e: any) {
-            toastService.error(e.message);
+            console.error("Initialization failed:", e);
+            setInitError(e.message || "Unknown database error");
+          } finally {
+            setIsInit(true);
           }
         };
         initServices();
@@ -126,7 +165,6 @@ const MainApp: React.FC = () => {
                     return;
                 }
             }
-            toastService.error(`An unexpected background error occurred. See console for details.`);
         };
 
         window.addEventListener('error', handleError);
@@ -159,17 +197,22 @@ const MainApp: React.FC = () => {
     }, []);
 
     const checkServerBackup = useCallback(async () => {
-      const backup = await fetchLatestBackup();
-      if (backup) {
-          const localTs = await db.getLatestUpdateTimestamp();
-          if (backup.contentTimestamp > localTs) {
-              setServerBackupContent(backup.content);
-              setServerBackupTimestamp(backup.backupTimestamp);
-              setLocalTimestamp(localTs);
-              setShowRestoreModal(true);
+      if (!isInit || initError) return;
+      try {
+          const backup = await fetchLatestBackup();
+          if (backup) {
+              const localTs = await db.getLatestUpdateTimestamp();
+              if (backup.contentTimestamp > localTs) {
+                  setServerBackupContent(backup.content);
+                  setServerBackupTimestamp(backup.backupTimestamp);
+                  setLocalTimestamp(localTs);
+                  setShowRestoreModal(true);
+              }
           }
+      } catch (e) {
+          console.warn("Failed to check server backup", e);
       }
-    }, []);
+    }, [isInit, initError]);
 
     useEffect(() => {
         // Simplified route handling - let Router handle actual path, just update UI state
@@ -192,10 +235,10 @@ const MainApp: React.FC = () => {
             setCurrentPage(rootPath);
         }
 
-        if (rootPath === 'dashboard') {
+        if (rootPath === 'dashboard' && isInit && !initError) {
             checkServerBackup();
         }
-    }, [location.pathname, checkServerBackup]);
+    }, [location.pathname, checkServerBackup, isInit, initError]);
 
     // Scroll Restoration Logic
     useLayoutEffect(() => {
@@ -233,7 +276,48 @@ const MainApp: React.FC = () => {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [openPalette]);
 
+    // Swipe to Open Sidebar Logic
     useEffect(() => {
+        const handleTouchStart = (e: TouchEvent) => {
+            // Only trigger if starting from the very left edge (20px)
+            if (e.touches[0].clientX < 25) {
+                touchStartX.current = e.touches[0].clientX;
+            } else {
+                touchStartX.current = null;
+            }
+        };
+
+        const handleTouchMove = (e: TouchEvent) => {
+            if (touchStartX.current !== null) {
+                const currentX = e.touches[0].clientX;
+                const diff = currentX - touchStartX.current;
+                
+                // If dragged right by > 50px
+                if (diff > 50) {
+                    setIsSidebarOpen(true);
+                    touchStartX.current = null; // Reset to prevent repeated triggering
+                }
+            }
+        };
+
+        const handleTouchEnd = () => {
+            touchStartX.current = null;
+        };
+
+        document.addEventListener('touchstart', handleTouchStart, { passive: true });
+        document.addEventListener('touchmove', handleTouchMove, { passive: true });
+        document.addEventListener('touchend', handleTouchEnd);
+
+        return () => {
+            document.removeEventListener('touchstart', handleTouchStart);
+            document.removeEventListener('touchmove', handleTouchMove);
+            document.removeEventListener('touchend', handleTouchEnd);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (initError) return; // Don't register commands if app is broken
+
         const globalCommands = [
             { id: 'nav-dashboard', name: 'Go to Dashboard', section: 'Navigation', icon: ICONS.GRID, action: () => navigate('/dashboard') },
             { id: 'nav-docs', name: 'Go to Documents', section: 'Navigation', icon: ICONS.FILE_TEXT, action: () => navigate('/documents') },
@@ -252,7 +336,7 @@ const MainApp: React.FC = () => {
         ];
         registerCommands(globalCommands);
         return () => unregisterCommands(globalCommands.map(c => c.id));
-    }, [registerCommands, unregisterCommands, navigate, createNewBook, createNewDocument]);
+    }, [registerCommands, unregisterCommands, navigate, createNewBook, createNewDocument, initError]);
 
     const handleRestoreFromServer = async () => {
         try {
@@ -351,6 +435,67 @@ const MainApp: React.FC = () => {
             toastService.info("Your local data is already up-to-date with the server.");
         }
     };
+    
+    const handleFactoryReset = async () => {
+        if (confirm("Are you SURE? This will wipe all local data and attempt to fix the database corruption. You will lose any unsaved work.")) {
+            try {
+                await db.deleteDatabase();
+                window.location.reload();
+            } catch (e) {
+                alert("Failed to reset database. Please clear browser data manually.");
+            }
+        }
+    };
+    
+    const handleRefresh = async () => {
+        try {
+            await manualTriggerBackup(true);
+            toastService.success("Synced with server.");
+        } catch (e) {
+            // Error handling is inside manualTriggerBackup, but we can catch connection errors here if needed
+        }
+    };
+
+    if (initError) {
+        return (
+             <div className="flex h-screen w-screen items-center justify-center bg-zinc-100 dark:bg-zinc-900 fixed inset-0 z-[99999]">
+                <div className="max-w-xl rounded-lg bg-white dark:bg-zinc-800 p-8 text-center shadow-2xl border border-red-200 dark:border-red-900">
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-100 dark:bg-red-900">
+                        <Icon name="ALERT_TRIANGLE" className="w-8 h-8 text-red-600 dark:text-red-300" />
+                    </div>
+                    <h1 className="mt-4 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">Critical Database Error</h1>
+                    <p className="mt-2 text-zinc-600 dark:text-zinc-400">
+                        The application could not initialize the local database. This usually happens due to browser storage corruption or a version mismatch.
+                    </p>
+                    <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-left text-xs font-mono overflow-auto max-h-32">
+                        {initError}
+                    </div>
+                    <div className="mt-6 flex flex-col gap-3">
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="inline-flex items-center justify-center rounded-md bg-zinc-600 px-5 py-2.5 text-center text-sm font-semibold text-white shadow-sm hover:bg-zinc-700"
+                        >
+                            Try Reloading
+                        </button>
+                        <button
+                            onClick={handleFactoryReset}
+                            className="inline-flex items-center justify-center rounded-md bg-red-600 px-5 py-2.5 text-center text-sm font-semibold text-white shadow-sm hover:bg-red-700"
+                        >
+                            Factory Reset (Wipe Data)
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (!isInit) {
+        return (
+            <div className="flex h-screen items-center justify-center bg-zinc-100 dark:bg-zinc-900">
+                <Loader message="Initializing Studio..." />
+            </div>
+        );
+    }
 
     const isFullScreenPage = currentPage === 'editor' || currentPage === 'reader' || currentPage === 'series';
     const isReaderPage = currentPage === 'reader';
@@ -366,36 +511,43 @@ const MainApp: React.FC = () => {
             {!isFullScreenPage && !isGeneralEditor && <Sidebar currentPage={currentPage} isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />}
             <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${(!isFullScreenPage && !isGeneralEditor) && 'lg:ml-64'}`}>
                 {!isFullScreenPage && !isGeneralEditor && <Header onMenuClick={() => setIsSidebarOpen(true)} />}
-                <main ref={mainScrollRef} className={`flex-1 overflow-y-auto ${isOffline ? 'pt-6' : ''}`}>
-                    <Routes>
-                        <Route path="/" element={<Navigate to={`/${localStorage.getItem('start_page') || 'dashboard'}`} replace />} />
-                        <Route path="/dashboard" element={<Dashboard />} />
-                        <Route path="/documents" element={<DocumentsDashboard />} />
-                        <Route path="/documents/:id" element={<GeneralEditor />} />
-                        <Route path="/reading" element={<CurrentlyReading />} />
-                        <Route path="/instructions" element={<InstructionsManager />} />
-                        <Route path="/macros" element={<MacrosManager />} />
-                        <Route path="/settings" element={<Settings onRestoreSuccess={async () => navigateHome()} onManualRestoreCheck={handleManualRestoreCheck} />} />
-                        <Route path="/archived" element={<Archived />} />
-                        <Route path="/trash" element={<Trash />} />
-                        <Route path="/series/:id" element={<SeriesManager />} />
-                        {editorBookId && (
-                            <Route path="/editor/:id" element={
-                                <BookEditorProvider bookId={editorBookId} onBack={navigateHome}>
-                                    <BookEditor onSave={navigateHome} onBack={navigateHome} />
-                                </BookEditorProvider>
-                            } />
-                        )}
-                        {readerBookId && <Route path="/reader/:id" element={<Reader bookId={readerBookId} />} />}
-                    </Routes>
-                </main>
+                
+                {/* Wrap main content area with PullToRefresh */}
+                <PullToRefresh onRefresh={handleRefresh} scrollRef={mainScrollRef} className={isOffline ? 'pt-6' : ''}>
+                    <main ref={mainScrollRef} className="flex-1 min-h-full">
+                        <Routes>
+                            <Route path="/" element={<Navigate to={`/${localStorage.getItem('start_page') || 'dashboard'}`} replace />} />
+                            <Route path="/dashboard" element={<Dashboard />} />
+                            <Route path="/documents" element={<DocumentsDashboard />} />
+                            <Route path="/documents/:id" element={<GeneralEditor />} />
+                            <Route path="/reading" element={<CurrentlyReading />} />
+                            <Route path="/instructions" element={<InstructionsManager />} />
+                            <Route path="/macros" element={<MacrosManager />} />
+                            <Route path="/settings" element={<Settings onRestoreSuccess={async () => navigateHome()} onManualRestoreCheck={handleManualRestoreCheck} />} />
+                            <Route path="/archived" element={<Archived />} />
+                            <Route path="/trash" element={<Trash />} />
+                            <Route path="/series/:id" element={<SeriesManager />} />
+                            {editorBookId && (
+                                <Route path="/editor/:id" element={
+                                    <BookEditorProvider bookId={editorBookId} onBack={navigateHome}>
+                                        <BookEditor onSave={navigateHome} onBack={navigateHome} />
+                                    </BookEditorProvider>
+                                } />
+                            )}
+                            {readerBookId && <Route path="/reader/:id" element={<Reader bookId={readerBookId} />} />}
+                        </Routes>
+                    </main>
+                </PullToRefresh>
             </div>
             <ToastContainer />
             <ModalRenderer modalState={modalState} />
+            <ConflictResolutionModal />
+            <StorageAlert />
             {!isReaderPage && <HistoryControls onUndo={handleUndo} onRedo={handleRedo} />}
             <CommandPalette />
             <FloatingAudioPlayer />
             <AudiobookGenerationIndicator />
+            <InstallPrompt />
             {showRestoreModal && (
                 <RestoreFromServerModal
                     backupTimestamp={serverBackupTimestamp}
