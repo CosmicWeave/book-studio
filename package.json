@@ -5,8 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "sync-manifest": "node scripts/sync-paths.js",
+    "build": "npm run sync-manifest && vite build --base /book-studio/ && touch dist/.nojekyll",
+    "preview": "vite preview",
+    "deployToken": "dotenv -e .env.local -- gh-pages -d dist",
+    "deploy": "gh-pages -d dist --repo git@github.com:CosmicWeave/book-studio.git",
+    "fullDeploy": "npm install && npm run build && npm run deployToken && npm run deploy"
   },
   "dependencies": {
     "@google/genai": "^1.13.0",

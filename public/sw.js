@@ -1,12 +1,12 @@
 
 const CACHE_NAME = 'ai-book-studio-v1.5.0'; // Bumped version
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icon.svg',
-  '/vendor/jspdf.umd.min.js',
-  '/vendor/html2canvas.min.js',
+  '/book-studio/',
+  '/book-studio/index.html',
+  '/book-studio/manifest.json',
+  '/book-studio/icon.svg',
+  '/book-studio/vendor/jspdf.umd.min.js',
+  '/book-studio/vendor/html2canvas.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   'https://rsms.me/inter/inter.css',
   'https://cdn.tailwindcss.com',
@@ -93,7 +93,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
   // Handle Share Target POST
-  if (event.request.method === 'POST' && url.pathname === '/share-target/') {
+  if (event.request.method === 'POST' && url.pathname === '/book-studio/share-target/') {
     event.respondWith((async () => {
       try {
         const formData = await event.request.formData();
@@ -116,10 +116,10 @@ self.addEventListener('fetch', (event) => {
         }));
 
         // Redirect to the app root
-        return Response.redirect('/', 303);
+        return Response.redirect('/book-studio/', 303);
       } catch (e) {
         console.error('Share target failed', e);
-        return Response.redirect('/', 303);
+        return Response.redirect('/book-studio/', 303);
       }
     })());
     return;
@@ -138,14 +138,14 @@ self.addEventListener('fetch', (event) => {
           return caches.open(CACHE_NAME).then((cache) => {
              // Optional: Cache the fresh index.html if successful
              if (networkResponse.ok) {
-                 cache.put('/index.html', networkResponse.clone());
+                 cache.put('/book-studio/index.html', networkResponse.clone());
              }
              return networkResponse;
           });
         })
         .catch(() => {
           // If offline, serve the cached index.html (App Shell)
-          return caches.match('/index.html');
+          return caches.match('/book-studio/index.html');
         })
     );
     return;

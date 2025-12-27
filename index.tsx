@@ -18,7 +18,8 @@ root.render(
 // Register the service worker for offline support
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
+    // We use a relative path here so it works under the /book-studio/ base path on GH Pages
+    navigator.serviceWorker.register('./sw.js')
       .then(registration => {
         console.log('ServiceWorker registration successful with scope: ', registration.scope);
       })
