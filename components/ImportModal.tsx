@@ -17,7 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import { Book } from '../types';
 import { backgroundTaskService } from '../services/backgroundTaskService';
 import { autoFillKnowledgeBase } from '../services/gemini';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 
 const GOOGLE_ICON = `<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path><path fill="none" d="M0 0h48v48H0z"></path></svg>`;
 
@@ -290,9 +290,10 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialFile 
         <>
             <p className="text-sm text-zinc-500 mt-4">Import content from .epub, .zip (for epubs), .pdf, or .md/.txt files.</p>
             <div className="mt-4">
-                <input 
-                    type="file" 
-                    onChange={e => handleFileChange(e.target.files ? e.target.files[0] : null)} 
+                            <input 
+                                type="file" 
+                                aria-label="Import file"
+                                onChange={e => handleFileChange(e.target.files ? e.target.files[0] : null)} 
                     accept=".epub,.zip,.pdf,.md,.txt" 
                     className="w-full text-sm text-zinc-600 dark:text-zinc-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 dark:file:bg-indigo-900/50 dark:file:text-indigo-200 dark:hover:file:bg-indigo-900"
                 />
@@ -320,6 +321,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialFile 
                                 value={customClientId} 
                                 onChange={e => setCustomClientId(e.target.value)} 
                                 placeholder="apps.googleusercontent.com"
+                                aria-label="Google Client ID"
                                 className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
                             />
                         </div>
@@ -329,6 +331,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialFile 
                                 type="text" 
                                 value={customApiKey} 
                                 onChange={e => setCustomApiKey(e.target.value)} 
+                                aria-label="Google API Key"
                                 className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
                             />
                         </div>
@@ -340,7 +343,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialFile 
                         </button>
                     </form>
                     <p className="text-xs text-zinc-400 mt-4">
-                        Don't have these? <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer" className="underline">Create a project</a> with Google Drive API enabled.
+                        Don't have these? <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer noopener" className="underline">Create a project</a> with Google Drive API enabled.
                     </p>
                 </div>
             );
@@ -394,22 +397,22 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialFile 
         <>
             <div className="flex justify-between items-center pb-4 border-b border-zinc-200 dark:border-zinc-700">
                 <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-100">Preview & Configure Import</h2>
-                <button onClick={onClose} className="p-2 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-700"><Icon name="CLOSE" /></button>
+                <button onClick={onClose} aria-label="Close" className="p-2 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-700"><Icon name="CLOSE" /></button>
             </div>
             <div className="space-y-4 mt-4 max-h-[60vh] overflow-y-auto pr-2 -mr-2">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label className="text-sm font-medium">Book Title</label>
-                        <input type="text" value={previewData?.topic || ''} onChange={e => setPreviewData(p => p ? ({...p, topic: e.target.value}) : null)} className="w-full mt-1 bg-white dark:bg-zinc-700 border-zinc-300 dark:border-zinc-600 rounded-md shadow-sm"/>
+                        <input type="text" aria-label="Book Title" value={previewData?.topic || ''} onChange={e => setPreviewData(p => p ? ({...p, topic: e.target.value}) : null)} className="w-full mt-1 bg-white dark:bg-zinc-700 border-zinc-300 dark:border-zinc-600 rounded-md shadow-sm"/>
                     </div>
                      <div>
                         <label className="text-sm font-medium">Author</label>
-                        <input type="text" value={previewData?.author || ''} onChange={e => setPreviewData(p => p ? ({...p, author: e.target.value}) : null)} className="w-full mt-1 bg-white dark:bg-zinc-700 border-zinc-300 dark:border-zinc-600 rounded-md shadow-sm"/>
+                        <input type="text" aria-label="Author" value={previewData?.author || ''} onChange={e => setPreviewData(p => p ? ({...p, author: e.target.value}) : null)} className="w-full mt-1 bg-white dark:bg-zinc-700 border-zinc-300 dark:border-zinc-600 rounded-md shadow-sm"/>
                     </div>
                 </div>
                 <div>
                     <label className="text-sm font-medium">Subtitle <span className="text-zinc-400 font-normal">(Optional)</span></label>
-                    <input type="text" value={previewData?.subtitle || ''} onChange={e => setPreviewData(p => p ? ({...p, subtitle: e.target.value}) : null)} className="w-full mt-1 bg-white dark:bg-zinc-700 border-zinc-300 dark:border-zinc-600 rounded-md shadow-sm"/>
+                    <input type="text" aria-label="Subtitle" value={previewData?.subtitle || ''} onChange={e => setPreviewData(p => p ? ({...p, subtitle: e.target.value}) : null)} className="w-full mt-1 bg-white dark:bg-zinc-700 border-zinc-300 dark:border-zinc-600 rounded-md shadow-sm"/>
                 </div>
                 {(file?.name.endsWith('.md') || source === 'google-docs') && (
                     <div className="grid grid-cols-2 gap-4 p-3 bg-zinc-50 dark:bg-zinc-900/50 rounded-lg border border-zinc-200 dark:border-zinc-700">
@@ -503,7 +506,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialFile 
                     <>
                         <div className="flex justify-between items-center pb-4">
                             <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-100">Import Book</h2>
-                            <button onClick={onClose} className="p-2 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-700"><Icon name="CLOSE" /></button>
+                            <button onClick={onClose} aria-label="Close" className="p-2 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-700"><Icon name="CLOSE" /></button>
                         </div>
                         {renderSourceSelector()}
                         {source === 'file' ? renderFileSelect() : renderGoogleDocsSelect()}

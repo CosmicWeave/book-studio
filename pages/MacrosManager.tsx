@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Macro, MacroAction } from '../types';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 import { AVAILABLE_MACRO_ACTIONS, ICONS } from '../constants';
 import { toastService } from '../services/toastService';
 import { modalService } from '../services/modalService';
@@ -111,7 +111,7 @@ const MacrosManager: React.FC = () => {
                 <div className="space-y-6">
                     <div>
                         <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Macro Name</label>
-                        <input type="text" name="name" value={editingMacro.name} onChange={handleInputChange} className="mt-1 block w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"/>
+                        <input type="text" name="name" aria-label="Macro Name" value={editingMacro.name} onChange={handleInputChange} className="mt-1 block w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"/>
                     </div>
                     <div>
                         <h3 className="text-lg font-medium text-gray-800 dark:text-gray-100 mb-2">Actions</h3>
@@ -134,7 +134,7 @@ const MacrosManager: React.FC = () => {
                                         <button onClick={() => handleMoveAction(index, 'up')} disabled={index === 0} className="p-1 rounded-full text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-30">↑</button>
                                         <button onClick={() => handleMoveAction(index, 'down')} disabled={index === editingMacro.actions.length - 1} className="p-1 rounded-full text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-30">↓</button>
                                     </div>
-                                    <button onClick={() => handleRemoveAction(action.id)} className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-gray-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button aria-label="Remove action" onClick={() => handleRemoveAction(action.id)} className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-gray-600 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <Icon name="TRASH" className="w-4 h-4" />
                                     </button>
                                 </div>
@@ -201,10 +201,10 @@ const MacrosManager: React.FC = () => {
                                             </ol>
                                         </div>
                                         <div className="flex items-center space-x-1 flex-shrink-0 ml-4">
-                                            <button onClick={() => handleEdit(macro)} className="p-2 rounded-full text-gray-400 hover:text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-700 transition-colors">
+                                            <button aria-label="Edit macro" onClick={() => handleEdit(macro)} className="p-2 rounded-full text-gray-400 hover:text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-700 transition-colors">
                                                 <Icon name="EDIT" className="w-5 h-5" />
                                             </button>
-                                            <button onClick={() => handleDelete(macro.id)} className="p-2 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-gray-700 transition-colors">
+                                            <button aria-label="Delete macro" onClick={() => handleDelete(macro.id)} className="p-2 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-gray-700 transition-colors">
                                                 <Icon name="TRASH" className="w-5 h-5" />
                                             </button>
                                         </div>

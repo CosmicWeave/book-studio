@@ -48,6 +48,7 @@ const GhostText = Extension.create({
     addProseMirrorPlugins() {
         let timeout: any;
         const pluginKey = new PluginKey('ghostText');
+        const opts = this.options;
 
         return [
             new Plugin({
@@ -105,7 +106,7 @@ const GhostText = Extension.create({
                 view(editorView) {
                     return {
                         update: (view, prevState) => {
-                            if (!this.options.enabled) return;
+                            if (!opts.enabled) return;
                             
                             const state = pluginKey.getState(view.state);
                             if (state.suggestion || state.loading) return;
@@ -122,7 +123,7 @@ const GhostText = Extension.create({
                                 if (textBefore.trim().length > 10) {
                                     try {
                                         // Set loading state if needed (optional UI feedback)
-                                        const suggestion = await gemini.predictNextText(textBefore, this.options.bookInstructions);
+                                        const suggestion = await gemini.predictNextText(textBefore, opts.bookInstructions);
                                         if (suggestion && view.dom) { // Check view.dom to ensure editor wasn't destroyed
                                             view.dispatch(view.state.tr.setMeta(pluginKey, { type: 'setSuggestion', suggestion }));
                                         }
@@ -295,7 +296,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, chapterIndex, on
                 // Only update if content is different to avoid cursor jumping
                 // But check if we need to preserve selection
                 const { from, to } = editor.state.selection;
-                editor.commands.setContent(newContent, { emitUpdate: false });
+                editor.commands.setContent(newContent, false);
                 editor.commands.setTextSelection({ from, to });
             }
         }
@@ -342,7 +343,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, chapterIndex, on
 
         if (mode === 'visual') {
             // Set HTML to editor
-            editor?.commands.setContent(html, { emitUpdate: true });
+            editor?.commands.setContent(html, true);
             // Trigger update to save to state/DB
             onUpdate(html);
         } else if (mode === 'markdown') {
@@ -377,7 +378,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, chapterIndex, on
                 onViewChange={handleViewChange} 
             />
 
-            <div style={{ display: viewMode === 'visual' ? 'block' : 'none' }}>
+            <div className={viewMode === 'visual' ? 'block' : 'hidden'}>
                 {editor && (
                     <>
                         <AIAssistantToolbar editor={editor} />

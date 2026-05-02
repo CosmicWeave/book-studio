@@ -54,7 +54,7 @@ class HistoryService {
   private async saveStateToDB() {
     try {
       // Dynamic import to avoid circular dependency with db.ts
-      const { db } = await import('./db');
+      const { db } = await import('./apiClient');
       // Ensure service is initialized before saving.
       await this.init();
       await db.history.put({ id: 'undoStack', value: this.undoStack });
@@ -67,7 +67,7 @@ class HistoryService {
   private async loadStateFromDB() {
     try {
       // Dynamic import to avoid circular dependency with db.ts
-      const { db } = await import('./db');
+      const { db } = await import('./apiClient');
       const undoData = await db.history.get('undoStack');
       const redoData = await db.history.get('redoStack');
       if (undoData && Array.isArray(undoData.value)) {

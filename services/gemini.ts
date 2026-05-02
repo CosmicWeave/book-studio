@@ -1,38 +1,153 @@
 
-import { GoogleGenAI, Type, Chat, Content, FunctionDeclaration, Modality, GroundingChunk as GenAIGroundingChunk, FunctionCall } from '@google/genai';
+// Types from the Google AI SDK are kept for structural compatibility only.
+// All actual AI calls are proxied through the backend server (/api/ai/*).
+import { Type, Content, FunctionDeclaration, FunctionCall } from '@google/genai';
 import { Book, ChapterOutline, GroundingChunk, AnalysisResult, KnowledgeSheet, Series, PacingAnalysisResult, ShowTellAnalysisResult, SeriesInconsistency, StyleSuggestion, CharacterVoiceInconsistency, PlotHole, LoreInconsistency } from '../types';
 
-// Lazily initialize to avoid crashing on load if API_KEY is missing.
-let aiInstance: GoogleGenAI | null = null;
+// ─── AI-enabled state ─────────────────────────────────────────────────────────
+// The server always provides AI (Ollama, Gemini, AnythingLLM). Default to true
+// and update via checkServerAiStatus() called once on app startup.
+let _aiEnabled = true;
 
-export const isAiEnabled = (): boolean => {
-    const apiKey = process.env.API_KEY;
-    return !!apiKey && apiKey !== 'undefined' && apiKey !== '';
+export const isAiEnabled = (): boolean => _aiEnabled;
+
+export const checkServerAiStatus = async (): Promise<boolean> => {
+    try {
+        const res = await fetch('/api/ai/health');
+        if (!res.ok) { _aiEnabled = false; return false; }
+        const data = await res.json();
+        _aiEnabled = data.available === true;
+    } catch {
+        _aiEnabled = false;
+    }
+    return _aiEnabled;
 };
 
-const checkOnline = () => {
+// ─── Server proxy helpers ─────────────────────────────────────────────────────
+
+type GenerateParams = { model?: string; contents: unknown; config?: Record<string, unknown> };
+type GeminiResponse = { text: string; candidates: { content: Content; finishReason: string }[]; audioData?: string };
+type StreamChunk = { text?: string; functionCalls?: { name: string; args: Record<string, unknown> }[] };
+
+async function serverGenerate(params: GenerateParams): Promise<GeminiResponse> {
+    if (!navigator.onLine) throw new Error('You are currently offline. AI features require an internet connection.');
+    const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'AI request failed' }));
+        throw new Error((err as { error?: string }).error ?? `AI error ${res.status}`);
+    }
+    return res.json() as Promise<GeminiResponse>;
+}
+
+async function* serverStreamGen(params: GenerateParams): AsyncGenerator<StreamChunk> {
+    if (!navigator.onLine) throw new Error('You are currently offline.');
+    const res = await fetch('/api/ai/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error(`AI stream failed: ${res.status}`);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (raw === '[DONE]') return;
+            try {
+                const chunk = JSON.parse(raw) as { text?: string; functionCall?: { name: string; args: Record<string, unknown> }; error?: string };
+                if (chunk.error) throw new Error(chunk.error);
+                yield {
+                    text: chunk.text,
+                    functionCalls: chunk.functionCall ? [chunk.functionCall] : undefined,
+                };
+            } catch (e) {
+                if (e instanceof Error && !e.message.startsWith('{')) throw e;
+            }
+        }
+    }
+}
+
+/** Mimics the Gemini Chat interface, but routes over the server proxy */
+class ServerChatProxy {
+    private history: Content[];
+    private model: string;
+    private config: Record<string, unknown> | undefined;
+
+    constructor(params: { model: string; history?: Content[]; config?: Record<string, unknown> }) {
+        this.history = [...(params.history ?? [])];
+        this.model = params.model;
+        this.config = params.config;
+    }
+
+    sendMessageStream(params: { message: string | Content }) {
+        const userContent: Content =
+            typeof params.message === 'string'
+                ? { role: 'user', parts: [{ text: params.message }] }
+                : (params.message as Content);
+
+        this.history.push(userContent);
+
+        // Snapshot history before streaming (immutable reference for the request)
+        const reqContents = [...this.history];
+        const model = this.model;
+        const config = this.config;
+        const self = this;
+        let accText = '';
+        let accFunctionCall: { name: string; args: Record<string, unknown> } | null = null;
+
+        async function* gen() {
+            for await (const chunk of serverStreamGen({ model, contents: reqContents, config })) {
+                if (chunk.text) accText += chunk.text;
+                if (chunk.functionCalls && chunk.functionCalls.length > 0) {
+                    accFunctionCall = chunk.functionCalls[0];
+                }
+                yield chunk;
+            }
+            // Append model turn to local history after stream completes
+            const parts: Content['parts'] = [];
+            if (accText) parts.push({ text: accText });
+            if (accFunctionCall) parts.push({ functionCall: accFunctionCall });
+            if (parts.length > 0) self.history.push({ role: 'model', parts });
+        }
+
+        return gen();
+    }
+
+    async getHistory(): Promise<Content[]> {
+        return this.history;
+    }
+}
+
+// ─── Proxy object that replaces GoogleGenAI ───────────────────────────────────
+
+const serverProxy = {
+    models: {
+        generateContent: (params: GenerateParams) => serverGenerate(params),
+        generateContentStream: (params: GenerateParams) => serverStreamGen(params),
+    },
+    chats: {
+        create: (params: { model: string; history?: Content[]; config?: Record<string, unknown> }) =>
+            new ServerChatProxy(params),
+    },
+};
+
+/** Returns the server-proxy object (replaces GoogleGenAI instance). */
+export const getAi = () => {
     if (!navigator.onLine) {
-        throw new Error("You are currently offline. AI features require an internet connection.");
+        throw new Error('You are currently offline. AI features require an internet connection.');
     }
-};
-
-/**
- * Lazily initializes and returns the GoogleGenAI instance.
- * Throws an error if the API key is not available.
- */
-export const getAi = (): GoogleGenAI => {
-    checkOnline(); // Fail fast if offline
-
-    if (aiInstance) {
-        return aiInstance;
-    }
-
-    const apiKey = process.env.API_KEY;
-    if (!apiKey || apiKey === 'undefined') {
-        throw new Error("Gemini API key is not configured. Please set the API_KEY environment variable.");
-    }
-    aiInstance = new GoogleGenAI({ apiKey });
-    return aiInstance;
+    return serverProxy;
 }
 
 export const PERSONA_INSTRUCTIONS: Record<string, string> = {
@@ -289,7 +404,7 @@ export const streamBrainstorm = async (
     return await chat.getHistory();
 };
 
-export const generateFullBookDataFromChat = async (history: Content[]): Promise<{ 
+export const generateFullBookDataFromChat = async (history: Content[], targetChapterCount?: number): Promise<{ 
     topic: string; 
     description: string; 
     instructions: string; 
@@ -297,6 +412,9 @@ export const generateFullBookDataFromChat = async (history: Content[]): Promise<
     imageStyle: string;
     outline: ChapterOutline[];
     knowledgeBase: KnowledgeSheet[];
+    isSeries?: boolean;
+    seriesTitle?: string;
+    seriesDescription?: string;
 }> => {
     const ai = getAi();
     const prompt = `Analyze the entire brainstorming conversation provided below. Your task is to architect the full book structure based on this discussion.
@@ -304,8 +422,9 @@ export const generateFullBookDataFromChat = async (history: Content[]): Promise<
     You must extract and generate:
     1. **Metadata**: Title, Description, Writing Style/Tone instructions.
     2. **Visuals**: Whether to generate images and the art style.
-    3. **Outline**: A detailed, chapter-by-chapter outline.
+    3. **Outline**: A detailed, chapter-by-chapter outline${targetChapterCount ? ` with EXACTLY ${targetChapterCount} chapters` : ''}.
     4. **Knowledge Base**: A comprehensive list of characters, places, and lore mentioned or implied in the chat.
+    5. **Series Detection**: If the conversation clearly implies a multi-book series (e.g. "trilogy", "series", sequel mentions), set isSeries=true and provide seriesTitle and seriesDescription.
 
     **Conversation History:**
     ${history.map(h => `${h.role}: ${h.parts.map(p => p.text).join('')}`).join('\n')}
@@ -331,7 +450,10 @@ export const generateFullBookDataFromChat = async (history: Content[]): Promise<
           "category": "Character" | "Place" | "Object" | "Event" | "Lore" | "Other",
           "content": "Detailed description of this entity based on the chat."
         }
-      ]
+      ],
+      "isSeries": true/false,
+      "seriesTitle": "Series Name (only if isSeries=true)",
+      "seriesDescription": "Brief description of the series arc (only if isSeries=true)"
     }
 
     Generate the full JSON now.`;
@@ -373,7 +495,10 @@ export const generateFullBookDataFromChat = async (history: Content[]): Promise<
                                 },
                                 required: ["name", "category", "content"]
                             }
-                        }
+                        },
+                        isSeries: { type: Type.BOOLEAN },
+                        seriesTitle: { type: Type.STRING },
+                        seriesDescription: { type: Type.STRING }
                     },
                     required: ["topic", "outline", "knowledgeBase"]
                 }
@@ -409,29 +534,24 @@ export const extractBookMetadataFromChat = async (history: Content[]) => {
 };
 
 export const generateSpeech = async (text: string, voiceName: string, voiceInstructions?: string): Promise<string> => {
-    const ai = getAi();
-    let promptText = text;
-    if (voiceInstructions && voiceInstructions.trim()) {
-        promptText = `(Perform with the following style: ${voiceInstructions}) ${text}`;
-    }
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash-preview-tts",
-            contents: [{ parts: [{ text: promptText }] }],
-            config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } },
-            },
+        const res = await fetch('/api/ai/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, voice: voiceName, voiceInstructions }),
         });
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (!base64Audio) throw new Error("No audio data returned from API.");
-        return base64Audio;
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: 'TTS failed' }));
+            throw new Error((err as { error?: string }).error ?? `TTS error ${res.status}`);
+        }
+        const arrayBuffer = await res.arrayBuffer();
+        const uint8 = new Uint8Array(arrayBuffer);
+        let binary = '';
+        for (let i = 0; i < uint8.byteLength; i++) binary += String.fromCharCode(uint8[i]);
+        return btoa(binary);
     } catch (error) {
         console.error("Error generating speech:", error);
-        if (error instanceof Error && error.message.includes('API key not valid')) {
-            throw new Error('The Gemini API key is invalid. Please check your settings.');
-        }
-        throw new Error("Failed to generate speech. The service may be busy or unavailable.");
+        throw new Error("Failed to generate speech. Make sure Kokoro TTS is configured on the server.");
     }
 };
 
@@ -968,6 +1088,53 @@ export const generateChapterContent = async (
     }
 };
 
+export const validateAndPolishChapterContent = async (
+    chapterHtml: string,
+    topic: string,
+    outline: ChapterOutline,
+    instructions: string,
+    bookKnowledgeBase: KnowledgeSheet[] | undefined,
+    seriesKnowledgeBase: KnowledgeSheet[] | undefined,
+    language: string = 'en'
+): Promise<string> => {
+    const ai = getAi();
+    const knowledgeBaseContext = formatKnowledgeBaseForPrompt(bookKnowledgeBase, seriesKnowledgeBase);
+
+    const prompt = `You are an expert developmental editor and copy editor.
+Review and polish the chapter HTML below.
+
+Validation goals:
+1. Keep strict alignment with chapter summary and story intent.
+2. Preserve facts/continuity from the knowledge base.
+3. Improve clarity, flow, and style consistency.
+4. Keep valid book-ready HTML (<p>, <h2>, <h3>, <blockquote>, <ul>, <ol>, <li>, <em>, <strong>).
+5. Do NOT add markdown fences or commentary.
+
+Book topic: ${topic}
+Target language: ${language}
+Chapter title: ${outline.title}
+Chapter summary: ${outline.summary}
+Writing style: ${instructions}
+${knowledgeBaseContext}
+
+Return ONLY the revised HTML content for the chapter.
+
+Chapter HTML to validate and polish:
+${chapterHtml}`;
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+    });
+
+    const revised = response.text?.trim();
+    if (!revised) {
+        throw new Error('Validation pass produced empty output.');
+    }
+
+    return revised;
+};
+
 export const autoFillKnowledgeBase = async (topic: string, content: string): Promise<KnowledgeSheet[]> => {
     const ai = getAi();
     const prompt = `You are a literary analyst AI. Read the book content and extract important entities for a knowledge base.
@@ -1024,6 +1191,69 @@ export const generateDetailedOutline = async (t: string, i: string, a: string, f
     return JSON.parse(res.text.trim());
 };
 export const generateSequelIdeas = async (b: Book, r: 'sequel'|'prequel'): Promise<string[]> => { const ai = getAi(); const res = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: `Generate 3 ${r} ideas for book "${b.topic}". Format: JSON string array.`, config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } } } }); return JSON.parse(res.text.trim()); };
+
+export const regenerateOutlineForBook = async (book: Book, targetChapterCount: number): Promise<ChapterOutline[]> => {
+    const ai = getAi();
+
+    const existingChapters = book.outline.length > 0
+        ? book.outline.map((ch, i) => `${i + 1}. ${ch.title}${ch.part ? ` [Part: ${ch.part}]` : ''}: ${ch.summary}`).join('\n')
+        : 'None yet.';
+
+    const writtenTitles = book.content
+        .filter(c => c && c.htmlContent.trim())
+        .map((_, i) => book.outline[i]?.title)
+        .filter(Boolean)
+        .map((t, i) => `${i + 1}. ${t}`)
+        .join('\n');
+
+    const kbSummary = book.knowledgeBase && book.knowledgeBase.length > 0
+        ? book.knowledgeBase.map(k => `${k.name} (${k.category}): ${k.content.slice(0, 120)}`).join('\n')
+        : 'Not specified.';
+
+    const prompt = `You are restructuring the outline for a book. Analyze the existing structure and regenerate it with EXACTLY ${targetChapterCount} chapters.
+
+**Book Title:** ${book.topic}
+**Description:** ${book.description || 'Not provided.'}
+**Writing Style:** ${book.instructions || 'Not specified.'}
+
+**Current Outline (${book.outline.length} chapters):**
+${existingChapters}
+
+**Already Written Chapters (keep these covered):**
+${writtenTitles || 'None written yet.'}
+
+**Key Characters & Lore:**
+${kbSummary}
+
+**Instructions:**
+- Produce EXACTLY ${targetChapterCount} chapters. No more, no less.
+- If compressing (fewer chapters), merge story beats logically. If expanding (more chapters), split and add scenes.
+- Preserve the core story arc and any already-written chapters as closely as possible.
+- Return a JSON array of chapter objects.`;
+
+    const res = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING },
+                        part: { type: Type.STRING },
+                        summary: { type: Type.STRING }
+                    },
+                    required: ['title', 'summary']
+                }
+            }
+        }
+    });
+
+    const parsed: { title: string; part?: string; summary: string }[] = JSON.parse(res.text.trim());
+    return parsed.map(ch => ({ id: crypto.randomUUID(), title: ch.title, part: ch.part, summary: ch.summary, status: 'todo' as const }));
+};
 export const summarizeBook = async (b: Book): Promise<string> => { const ai = getAi(); const res = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: `Summarize book "${b.topic}".` }); return res.text.trim(); };
 export const breakdownChapterSummary = async (t: string, i: string, c: ChapterOutline): Promise<string[]> => { const ai = getAi(); try { const res = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: `Breakdown chapter "${c.title}": ${c.summary}. 3-5 steps. JSON string array.`, config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } } } }); return JSON.parse(res.text.trim()); } catch { return [c.summary]; } };
 export const generateCoverImage = async (t: string, s: string): Promise<string> => { const ai = getAi(); const r = await ai.models.generateContent({ model: 'gemini-2.5-flash-image', contents: { parts: [{ text: `Book Cover. Title: ${t}. Style: ${s}` }] }, config: { imageConfig: { aspectRatio: "1:1" } } }); for(const p of r.candidates?.[0]?.content?.parts || []) if(p.inlineData) return `data:${p.inlineData.mimeType || 'image/png'};base64,${p.inlineData.data}`; throw new Error("No image"); };

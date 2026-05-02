@@ -1,6 +1,6 @@
 import { BackgroundTask, BackgroundTaskState } from '../types';
 import { toastService } from './toastService';
-import { db } from './db';
+import { db } from './apiClient';
 
 type Subscriber = (state: BackgroundTaskState) => void;
 

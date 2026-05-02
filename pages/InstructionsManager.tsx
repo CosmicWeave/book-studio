@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { InstructionTemplate } from '../types';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 import { improveInstructionPrompt } from '../services/gemini';
 import { ICONS } from '../constants';
 import { toastService } from '../services/toastService';
@@ -131,11 +131,11 @@ const InstructionsManager: React.FC = () => {
                     <div className="space-y-6">
                         <div>
                             <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Template Name</label>
-                            <input type="text" name="name" value={editingInstruction.name} onChange={handleInputChange} className="mt-1 block w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"/>
+                            <input type="text" name="name" aria-label="Template Name" value={editingInstruction.name} onChange={handleInputChange} className="mt-1 block w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"/>
                         </div>
                         <div>
                             <label htmlFor="prompt" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Instruction Prompt</label>
-                            <textarea name="prompt" rows={5} value={editingInstruction.prompt} onChange={handleInputChange} className="mt-1 block w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"/>
+                            <textarea name="prompt" aria-label="Instruction Prompt" rows={5} value={editingInstruction.prompt} onChange={handleInputChange} className="mt-1 block w-full bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"/>
                             {isAiEnabled && (
                             <div className="mt-2 flex justify-end">
                                 <button
@@ -189,10 +189,10 @@ const InstructionsManager: React.FC = () => {
                                         <p className="text-gray-600 dark:text-gray-400 mt-1 text-sm">{instr.prompt}</p>
                                    </div>
                                    <div className="flex items-center space-x-1 flex-shrink-0 ml-4">
-                                        <button onClick={() => handleEdit(instr)} className="p-2 rounded-full text-gray-400 hover:text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-700 transition-colors">
+                                        <button aria-label="Edit template" onClick={() => handleEdit(instr)} className="p-2 rounded-full text-gray-400 hover:text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-700 transition-colors">
                                             <Icon name="EDIT" className="w-5 h-5" />
                                         </button>
-                                        <button onClick={() => handleDelete(instr.id)} className="p-2 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-gray-700 transition-colors">
+                                        <button aria-label="Delete template" onClick={() => handleDelete(instr.id)} className="p-2 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-gray-700 transition-colors">
                                             <Icon name="TRASH" className="w-5 h-5" />
                                         </button>
                                    </div>

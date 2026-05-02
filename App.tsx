@@ -5,7 +5,7 @@ import { AppContext, AppContextProvider } from './contexts/AppContext';
 import { CommandPaletteProvider, useCommandPaletteActions } from './contexts/CommandPaletteContext';
 import { BookEditorProvider } from './contexts/BookEditorContext';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { db } from './services/db';
+import { db } from './services/apiClient';
 import { initGoogleDriveService, attemptSilentSignIn } from './services/googleDrive';
 import { historyService } from './services/historyService';
 import { fetchLatestBackup, initBackupService, manualTriggerBackup } from './services/backupService';

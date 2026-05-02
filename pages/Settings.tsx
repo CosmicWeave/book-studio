@@ -1,7 +1,8 @@
 
 import React, { useRef, useState, useEffect } from 'react';
+import { exportIndexedDBToServer } from '../services/migrationHelper';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 import { ICONS } from '../constants';
 import Loader from '../components/Loader';
 import { 
@@ -37,6 +38,39 @@ interface SettingsProps {
 }
 
 type SettingsTab = 'general' | 'data' | 'cloud' | 'shortcuts' | 'system';
+type AiProvider = 'ollama' | 'gemini' | 'anythingllm';
+
+const MigrateButton: React.FC = () => {
+    const [status, setStatus] = useState('');
+    const [running, setRunning] = useState(false);
+    const [done, setDone] = useState(false);
+
+    const run = async () => {
+        setRunning(true);
+        setDone(false);
+        const result = await exportIndexedDBToServer((msg) => setStatus(msg));
+        setRunning(false);
+        if (result.ok) {
+            setDone(true);
+            setStatus('Migration complete! Reload the page to see migrated data.');
+        } else {
+            setStatus(`Error: ${result.error}`);
+        }
+    };
+
+    return (
+        <div>
+            <button
+                onClick={run}
+                disabled={running}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50"
+            >
+                {running ? 'Migrating…' : 'Import from Browser Storage'}
+            </button>
+            {status && <p className={`text-xs mt-2 ${done ? 'text-green-600' : 'text-zinc-500'}`}>{status}</p>}
+        </div>
+    );
+};
 
 const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCheck }) => {
     const { theme, toggleTheme } = useTheme();
@@ -57,6 +91,16 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
     const [isPersisted, setIsPersisted] = useState(false);
     const [startPage, setStartPage] = useState(localStorage.getItem('start_page') || 'dashboard');
     const [selectedProvider, setSelectedProvider] = useState<SyncProvider>('google_drive');
+    const [aiProvider, setAiProvider] = useState<AiProvider>('ollama');
+    const [aiModel, setAiModel] = useState('');
+    const [ollamaUrl, setOllamaUrl] = useState('http://host.docker.internal:11434');
+    const [anythingllmUrl, setAnythingllmUrl] = useState('http://host.docker.internal:3001');
+    const [geminiApiKey, setGeminiApiKey] = useState('');
+    const [anythingllmApiKey, setAnythingllmApiKey] = useState('');
+    const [hasGeminiKey, setHasGeminiKey] = useState(false);
+    const [hasAnythingllmKey, setHasAnythingllmKey] = useState(false);
+    const [aiAvailable, setAiAvailable] = useState(false);
+    const [activeAiProvider, setActiveAiProvider] = useState('none');
     
     // Google Drive State
     const [driveStatus, setDriveStatus] = useState<DriveInitState>('loading');
@@ -102,6 +146,31 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
             const creds = getCredentials();
             setCustomClientId(creds.clientId);
             setCustomApiKey(creds.apiKey);
+
+            try {
+                const [configRes, healthRes] = await Promise.all([
+                    fetch('/api/ai/config'),
+                    fetch('/api/ai/health'),
+                ]);
+
+                if (configRes.ok) {
+                    const cfg = await configRes.json();
+                    setAiProvider((cfg.provider || 'ollama') as AiProvider);
+                    setAiModel(cfg.model || '');
+                    setOllamaUrl(cfg.ollamaUrl || 'http://host.docker.internal:11434');
+                    setAnythingllmUrl(cfg.anythingllmUrl || 'http://host.docker.internal:3001');
+                    setHasGeminiKey(!!cfg.hasGeminiKey);
+                    setHasAnythingllmKey(!!cfg.hasAnythingllmKey);
+                }
+
+                if (healthRes.ok) {
+                    const health = await healthRes.json();
+                    setAiAvailable(health.available === true);
+                    setActiveAiProvider(health.provider || 'none');
+                }
+            } catch {
+                // Ignore AI config fetch failures here; user can still use other settings.
+            }
         };
         
         const updateStorageInfo = async () => {
@@ -504,6 +573,57 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
         }
     };
 
+    const handleSaveAiConfig = async () => {
+        setIsLoading(true);
+        setLoadingMessage('Saving AI configuration...');
+        try {
+            const payload: Record<string, unknown> = {
+                provider: aiProvider,
+                model: aiModel.trim() || undefined,
+                ollamaUrl: ollamaUrl.trim() || undefined,
+                anythingllmUrl: anythingllmUrl.trim() || undefined,
+            };
+
+            if (geminiApiKey.trim()) payload.geminiApiKey = geminiApiKey.trim();
+            if (anythingllmApiKey.trim()) payload.anythingllmApiKey = anythingllmApiKey.trim();
+
+            const res = await fetch('/api/ai/config', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: 'Failed to save AI config' }));
+                throw new Error(err.error || 'Failed to save AI config');
+            }
+
+            const [configRes, healthRes] = await Promise.all([
+                fetch('/api/ai/config'),
+                fetch('/api/ai/health'),
+            ]);
+
+            if (configRes.ok) {
+                const cfg = await configRes.json();
+                setHasGeminiKey(!!cfg.hasGeminiKey);
+                setHasAnythingllmKey(!!cfg.hasAnythingllmKey);
+            }
+            if (healthRes.ok) {
+                const health = await healthRes.json();
+                setAiAvailable(health.available === true);
+                setActiveAiProvider(health.provider || 'none');
+            }
+
+            setGeminiApiKey('');
+            setAnythingllmApiKey('');
+            toastService.success('AI configuration saved.');
+        } catch (e: any) {
+            toastService.error(`Failed to save AI config: ${e.message}`);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     return (
         <div className="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8">
             {isLoading && <Loader message={loadingMessage} />}
@@ -569,6 +689,7 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                     <p className="text-sm text-zinc-500 dark:text-zinc-400">Which page to show when the app opens.</p>
                                 </div>
                                 <select 
+                                    aria-label="Start page"
                                     value={startPage} 
                                     onChange={handleStartPageChange}
                                     className="bg-zinc-50 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm text-zinc-700 dark:text-zinc-200"
@@ -644,6 +765,7 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                         ref={fileInputRef} 
                                         onChange={handleFileChange} 
                                         accept=".json" 
+                                        title="Select backup file to restore"
                                         className="hidden" 
                                     />
                                     <button onClick={handleRestoreClick} className="text-sm font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300">Select File &rarr;</button>
@@ -681,6 +803,7 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                 <div className="mb-6">
                                     <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">Select Provider</label>
                                     <select
+                                        aria-label="Sync provider"
                                         value={selectedProvider}
                                         onChange={handleProviderChange}
                                         className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-sm"
@@ -697,11 +820,11 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                             <p className="text-sm text-zinc-600 dark:text-zinc-400">Configure your Google Cloud credentials to enable Drive sync.</p>
                                             <div>
                                                 <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Client ID</label>
-                                                <input type="text" value={customClientId} onChange={e => setCustomClientId(e.target.value)} className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm" placeholder="apps.googleusercontent.com"/>
+                                                <input type="text" aria-label="Google Client ID" value={customClientId} onChange={e => setCustomClientId(e.target.value)} className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm" placeholder="apps.googleusercontent.com"/>
                                             </div>
                                             <div>
                                                 <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">API Key</label>
-                                                <input type="text" value={customApiKey} onChange={e => setCustomApiKey(e.target.value)} className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"/>
+                                                <input type="text" aria-label="Google API Key" value={customApiKey} onChange={e => setCustomApiKey(e.target.value)} className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"/>
                                             </div>
                                             <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-indigo-700">Save & Connect</button>
                                         </form>
@@ -741,6 +864,7 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                         <div className="flex gap-2">
                                             <input 
                                                 type="password" 
+                                                aria-label="Backup service API key"
                                                 value={backupApiKey}
                                                 onChange={e => setBackupApiKey(e.target.value)}
                                                 className="flex-grow bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg p-2.5 text-sm"
@@ -762,7 +886,7 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                             <p className="text-sm text-zinc-500 dark:text-zinc-400">Automatically sync changes to our secure server.</p>
                                         </div>
                                         <label className="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" className="sr-only peer" checked={autoBackupEnabled} onChange={handleAutoBackupToggle} />
+                                            <input type="checkbox" aria-label="Enable auto-backup" className="sr-only peer" checked={autoBackupEnabled} onChange={handleAutoBackupToggle} />
                                             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
                                         </label>
                                     </div>
@@ -774,7 +898,7 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                             <p className="text-sm text-zinc-500 dark:text-zinc-400">Exclude large images from backups to save data.</p>
                                         </div>
                                         <label className="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" className="sr-only peer" checked={lowDataMode} onChange={handleLowDataModeToggle} />
+                                            <input type="checkbox" aria-label="Enable low data mode" className="sr-only peer" checked={lowDataMode} onChange={handleLowDataModeToggle} />
                                             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 dark:peer-focus:ring-indigo-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
                                         </label>
                                     </div>
@@ -819,11 +943,121 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                     {activeTab === 'system' && (
                         <div className="space-y-6">
                             <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-100">System</h2>
+
+                            <div className="p-4 bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-700 space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="font-semibold text-zinc-800 dark:text-zinc-100">AI Configuration</h3>
+                                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${aiAvailable ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
+                                        {aiAvailable ? `Ready (${activeAiProvider})` : 'Not Ready'}
+                                    </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Provider</label>
+                                        <select
+                                            aria-label="AI provider"
+                                            value={aiProvider}
+                                            onChange={(e) => setAiProvider(e.target.value as AiProvider)}
+                                            className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                        >
+                                            <option value="gemini">Gemini</option>
+                                            <option value="ollama">Ollama</option>
+                                            <option value="anythingllm">AnythingLLM</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Model</label>
+                                        <input
+                                            type="text"
+                                            aria-label="AI model"
+                                            value={aiModel}
+                                            onChange={(e) => setAiModel(e.target.value)}
+                                            placeholder={aiProvider === 'gemini' ? 'gemini-2.5-flash' : 'llama3.2'}
+                                            className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                        />
+                                    </div>
+                                </div>
+
+                                {aiProvider === 'gemini' && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Gemini API Key</label>
+                                        <input
+                                            type="password"
+                                            aria-label="Gemini API key"
+                                            value={geminiApiKey}
+                                            onChange={(e) => setGeminiApiKey(e.target.value)}
+                                            placeholder={hasGeminiKey ? 'Key already saved (enter to replace)' : 'Paste your Gemini API key'}
+                                            className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                        />
+                                        <p className="text-xs text-zinc-500 mt-1">Google login alone is not enough here; use a Gemini API key.</p>
+                                    </div>
+                                )}
+
+                                {aiProvider === 'ollama' && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Ollama URL</label>
+                                        <input
+                                            type="text"
+                                            aria-label="Ollama URL"
+                                            value={ollamaUrl}
+                                            onChange={(e) => setOllamaUrl(e.target.value)}
+                                            placeholder="http://host.docker.internal:11434"
+                                            className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                        />
+                                    </div>
+                                )}
+
+                                {aiProvider === 'anythingllm' && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">AnythingLLM URL</label>
+                                            <input
+                                                type="text"
+                                                aria-label="AnythingLLM URL"
+                                                value={anythingllmUrl}
+                                                onChange={(e) => setAnythingllmUrl(e.target.value)}
+                                                placeholder="http://host.docker.internal:3001"
+                                                className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">AnythingLLM API Key</label>
+                                            <input
+                                                type="password"
+                                                aria-label="AnythingLLM API key"
+                                                value={anythingllmApiKey}
+                                                onChange={(e) => setAnythingllmApiKey(e.target.value)}
+                                                placeholder={hasAnythingllmKey ? 'Key already saved (enter to replace)' : 'Paste API key'}
+                                                className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="flex justify-end">
+                                    <button
+                                        onClick={handleSaveAiConfig}
+                                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors"
+                                    >
+                                        Save AI Configuration
+                                    </button>
+                                </div>
+                            </div>
+
                             <div className="p-4 bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-700">
                                 <p className="text-sm text-zinc-600 dark:text-zinc-400"><strong>Version:</strong> 1.3.2</p>
                                 <p className="text-sm text-zinc-600 dark:text-zinc-400"><strong>Environment:</strong> Production</p>
                             </div>
                             
+                            <div className="pt-4 border-t border-zinc-100 dark:border-zinc-700">
+                                <h3 className="font-semibold text-zinc-800 dark:text-zinc-100 mb-1">Migrate from Browser Storage</h3>
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+                                    Import all data from this browser's IndexedDB into the server database. Safe to run multiple times.
+                                </p>
+                                <MigrateButton />
+                            </div>
+
                             <div className="pt-4 border-t border-zinc-100 dark:border-zinc-700">
                                 <h3 className="font-bold text-red-600 dark:text-red-400 mb-2">Danger Zone</h3>
                                 <button onClick={handleResetApp} className="px-4 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition-colors shadow-sm">

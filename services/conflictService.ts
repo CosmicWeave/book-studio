@@ -1,6 +1,6 @@
 
 import { Book, GeneralDoc } from '../types';
-import { db } from './db';
+import { db } from './apiClient';
 
 export type ConflictResolutionStrategy = 'use_local' | 'use_remote' | 'smart_merge';
 

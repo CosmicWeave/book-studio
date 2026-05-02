@@ -2,6 +2,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { initGlobalErrorHandlers } from './services/errorLogger';
+
+// Capture uncaught JS errors and unhandled promise rejections
+initGlobalErrorHandlers();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

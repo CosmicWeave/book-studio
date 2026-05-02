@@ -1,7 +1,7 @@
 
 import React, { createContext, useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import { Book, ChapterContent, ChapterOutline, BookSnapshot, Macro, InstructionTemplate, AnalysisResult, StyleSuggestion, PacingAnalysisResult, ShowTellAnalysisResult, MacroResult, KnowledgeSheet, ChatMessage, ImageSuggestion, Scene, CharacterVoiceInconsistency, PlotHole, LoreInconsistency, CustomPersona } from '../types';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 import * as gemini from '../services/gemini';
 import { toastService } from '../services/toastService';
 import { modalService } from '../services/modalService';
@@ -13,6 +13,8 @@ import { useNavigate } from 'react-router-dom';
 import { backgroundTaskService } from '../services/backgroundTaskService';
 import { manualTriggerBackup } from '../services/backupService';
 import { AppContext } from './AppContext';
+
+type GenerationMode = 'full' | 'budget';
 
 interface BookEditorContextType {
     book: Book | null;
@@ -94,8 +96,12 @@ interface BookEditorContextType {
     handleBrainstormComplete: (outline: ChapterOutline[], finalTitle: string) => void;
     
     isGeneratingChapter: number | null; // index of chapter being generated
+    generationMode: GenerationMode;
+    setGenerationMode: (mode: GenerationMode) => void;
     handleGenerateChapters: () => Promise<void>;
     handleGenerateFullBook: () => Promise<void>;
+    handleRebuildOutline: (targetChapterCount: number) => Promise<void>;
+    isRebuildingOutline: boolean;
     
     isAnalysisModalOpen: boolean;
     setIsAnalysisModalOpen: (isOpen: boolean) => void;
@@ -293,6 +299,8 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     
     const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
     const [isGeneratingChapter, setIsGeneratingChapter] = useState<number | null>(null);
+    const [isRebuildingOutline, setIsRebuildingOutline] = useState(false);
+    const [generationMode, setGenerationMode] = useState<GenerationMode>('budget');
     const [generatingSubSection, setGeneratingSubSection] = useState<{ chapter: number, section: number } | null>(null);
     
     const [snapshots, setSnapshots] = useState<BookSnapshot[]>([]);
@@ -502,8 +510,185 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     };
 
     // ... (Existing methods omitted for brevity)
-    const handleGenerateChapters = async () => { /* ... */ if (!book) return; const targetIndex = book.content.length < book.outline.length ? book.content.length : -1; if (targetIndex === -1) { toastService.info("All chapters appear to be written!"); return; } setIsGeneratingChapter(targetIndex); setActiveChapterIndex(targetIndex); try { const chapterOutline = book.outline[targetIndex]; if (!book.content[targetIndex]) { handleContentChange(targetIndex, ''); } await gemini.generateChapterContent( book.topic, book.instructions, book.knowledgeBase, seriesKnowledgeBase, chapterOutline, book.bookChatHistory || [], (chunk) => { setBook(prev => { if (!prev) return null; const newContent = [...prev.content]; const currentHtml = newContent[targetIndex]?.htmlContent || ''; newContent[targetIndex] = { title: chapterOutline.title, htmlContent: currentHtml + chunk }; return { ...prev, content: newContent }; }); }, book.language || 'en' ); toastService.success(`Chapter "${chapterOutline.title}" generated.`); setSaveStatus('unsaved'); } catch (e: any) { toastService.error(`Generation failed: ${e.message}`); } finally { setIsGeneratingChapter(null); } };
-    const handleGenerateFullBook = async () => { /* ... */ if (!book) return; let nextIndex = book.content.findIndex(c => !c || !c.htmlContent.trim()); if (nextIndex === -1 && book.content.length < book.outline.length) { nextIndex = book.content.length; } if (nextIndex === -1) { toastService.info("All chapters written."); return; } const confirmed = await modalService.confirm({ title: 'Generate Remaining Book?', message: `This will auto-generate chapters starting from ${book.outline[nextIndex].title}. This may take a while. Ensure you have a stable connection.`, confirmText: 'Start Generation' }); if (!confirmed) return; for (let i = nextIndex; i < book.outline.length; i++) { setIsGeneratingChapter(i); setActiveChapterIndex(i); document.getElementById(`chapter-${i}`)?.scrollIntoView(); try { await new Promise(r => setTimeout(r, 500)); const outline = book.outline[i]; setBook(prev => { if(!prev) return null; const nc = [...prev.content]; if (!nc[i]) nc[i] = { title: outline.title, htmlContent: '' }; return { ...prev, content: nc }; }); await gemini.generateChapterContent( book.topic, book.instructions, book.knowledgeBase, seriesKnowledgeBase, outline, chatMessages || [], (chunk) => { setBook(prev => { if (!prev) return null; const newContent = [...prev.content]; const currentHtml = newContent[i]?.htmlContent || ''; newContent[i] = { title: outline.title, htmlContent: currentHtml + chunk }; return { ...prev, content: newContent }; }); }, book.language || 'en' ); await handleSaveToDB(); } catch (e: any) { toastService.error(`Stopped at chapter ${i+1}: ${e.message}`); break; } } setIsGeneratingChapter(null); toastService.success("Batch generation complete."); };
+    const handleGenerateChapters = async () => {
+        if (!book) return;
+        const targetIndex = book.content.length < book.outline.length ? book.content.length : -1;
+        if (targetIndex === -1) {
+            toastService.info("All chapters appear to be written!");
+            return;
+        }
+
+        setIsGeneratingChapter(targetIndex);
+        setActiveChapterIndex(targetIndex);
+
+        try {
+            const chapterOutline = book.outline[targetIndex];
+            let generatedHtml = '';
+            if (!book.content[targetIndex]) {
+                handleContentChange(targetIndex, '');
+            }
+
+            await gemini.generateChapterContent(
+                book.topic,
+                book.instructions,
+                book.knowledgeBase,
+                seriesKnowledgeBase,
+                chapterOutline,
+                book.bookChatHistory || [],
+                (chunk) => {
+                    generatedHtml += chunk;
+                    setBook(prev => {
+                        if (!prev) return null;
+                        const newContent = [...prev.content];
+                        const currentHtml = newContent[targetIndex]?.htmlContent || '';
+                        newContent[targetIndex] = { title: chapterOutline.title, htmlContent: currentHtml + chunk };
+                        return { ...prev, content: newContent };
+                    });
+                },
+                book.language || 'en'
+            );
+
+            if (generationMode === 'full') {
+                if (generatedHtml.trim()) {
+                    const polished = await gemini.validateAndPolishChapterContent(
+                        generatedHtml.trim(),
+                        book.topic,
+                        chapterOutline,
+                        book.instructions,
+                        book.knowledgeBase,
+                        seriesKnowledgeBase,
+                        book.language || 'en'
+                    );
+                    handleContentChange(targetIndex, polished);
+                }
+            }
+
+            toastService.success(
+                generationMode === 'full'
+                    ? `Chapter "${chapterOutline.title}" generated and validated.`
+                    : `Chapter "${chapterOutline.title}" generated.`
+            );
+            setSaveStatus('unsaved');
+        } catch (e: any) {
+            toastService.error(`Generation failed: ${e.message}`);
+        } finally {
+            setIsGeneratingChapter(null);
+        }
+    };
+
+    const handleGenerateFullBook = async () => {
+        if (!book) return;
+
+        let nextIndex = book.content.findIndex(c => !c || !c.htmlContent.trim());
+        if (nextIndex === -1 && book.content.length < book.outline.length) {
+            nextIndex = book.content.length;
+        }
+        if (nextIndex === -1) {
+            toastService.info("All chapters written.");
+            return;
+        }
+
+        const confirmed = await modalService.confirm({
+            title: 'Generate Remaining Book?',
+            message: `This will auto-generate chapters starting from ${book.outline[nextIndex].title}. Mode: ${generationMode === 'full' ? 'Full Validation (extra pass)' : 'Budget (single pass)'}.`,
+            confirmText: 'Start Generation'
+        });
+        if (!confirmed) return;
+
+        for (let i = nextIndex; i < book.outline.length; i++) {
+            setIsGeneratingChapter(i);
+            setActiveChapterIndex(i);
+            document.getElementById(`chapter-${i}`)?.scrollIntoView();
+
+            try {
+                await new Promise(r => setTimeout(r, 500));
+                const outline = book.outline[i];
+                let generatedHtml = '';
+
+                setBook(prev => {
+                    if (!prev) return null;
+                    const nc = [...prev.content];
+                    if (!nc[i]) nc[i] = { title: outline.title, htmlContent: '' };
+                    return { ...prev, content: nc };
+                });
+
+                await gemini.generateChapterContent(
+                    book.topic,
+                    book.instructions,
+                    book.knowledgeBase,
+                    seriesKnowledgeBase,
+                    outline,
+                    chatMessages || [],
+                    (chunk) => {
+                        generatedHtml += chunk;
+                        setBook(prev => {
+                            if (!prev) return null;
+                            const newContent = [...prev.content];
+                            const currentHtml = newContent[i]?.htmlContent || '';
+                            newContent[i] = { title: outline.title, htmlContent: currentHtml + chunk };
+                            return { ...prev, content: newContent };
+                        });
+                    },
+                    book.language || 'en'
+                );
+
+                if (generationMode === 'full') {
+                    if (generatedHtml.trim()) {
+                        const polished = await gemini.validateAndPolishChapterContent(
+                            generatedHtml.trim(),
+                            book.topic,
+                            outline,
+                            book.instructions,
+                            book.knowledgeBase,
+                            seriesKnowledgeBase,
+                            book.language || 'en'
+                        );
+                        handleContentChange(i, polished);
+                    }
+                }
+
+                await handleSaveToDB();
+            } catch (e: any) {
+                toastService.error(`Stopped at chapter ${i + 1}: ${e.message}`);
+                break;
+            }
+        }
+
+        setIsGeneratingChapter(null);
+        toastService.success(
+            generationMode === 'full'
+                ? "Batch generation complete with validation."
+                : "Batch generation complete (budget mode)."
+        );
+    };
+    const handleRebuildOutline = async (targetChapterCount: number) => {
+        if (!book) return;
+        const writtenCount = book.content.filter(c => c && c.htmlContent.trim()).length;
+        if (writtenCount > 0) {
+            const confirmed = await modalService.confirm({
+                title: 'Rebuild Outline?',
+                message: `${writtenCount} chapter(s) have already been written. Rebuilding the outline may cause a mismatch with existing content. Existing chapter content will NOT be deleted, but the outline will change. Continue?`,
+                confirmText: 'Rebuild Outline',
+                danger: true
+            });
+            if (!confirmed) return;
+        }
+        setIsRebuildingOutline(true);
+        try {
+            const newOutline = await gemini.regenerateOutlineForBook(book, targetChapterCount);
+            // Sync content array length to new outline length
+            const newContent = [...book.content];
+            while (newContent.length < newOutline.length) newContent.push({ title: newOutline[newContent.length].title, htmlContent: '' });
+            setBook(prev => prev ? { ...prev, outline: newOutline, content: newContent.slice(0, newOutline.length) } : null);
+            setSaveStatus('unsaved');
+            toastService.success(`Outline rebuilt with ${newOutline.length} chapters.`);
+        } catch (e: any) {
+            toastService.error(`Failed to rebuild outline: ${e.message}`);
+        } finally {
+            setIsRebuildingOutline(false);
+        }
+    };
+
     const handleStartEpubExport = async (options: any) => { if (!book) return; setIsEpubModalOpen(false); toastService.info("Generating ePub..."); try { await exportToEpub(book, options); toastService.success("ePub Downloaded!"); } catch (e: any) { toastService.error(`Export failed: ${e.message}`); } };
     const handleExportPdf = async () => { if (!book) return; toastService.info("Generating PDF..."); try { await exportToPdf(book); toastService.success("PDF Downloaded!"); } catch (e: any) { toastService.error(`Export failed: ${e.message}`); } };
     const createSnapshot = async (name: string) => { if (!book) return; await appCreateSnapshot(book, name); const snaps = await fetchSnapshotsForBook(book.id); setSnapshots(snaps.sort((a, b) => b.createdAt - a.createdAt)); };
@@ -701,7 +886,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         handleSaveToDB, handleSaveAndSync,
         isSnapshotsPanelOpen, setIsSnapshotsPanelOpen, snapshots, createSnapshot, handleRestoreSnapshot, handleDeleteSnapshot,
         isBrainstormModalOpen, setIsBrainstormModalOpen, handleStartOutlineBrainstorm, handleBrainstormComplete,
-        isGeneratingChapter, handleGenerateChapters, handleGenerateFullBook,
+        isGeneratingChapter, generationMode, setGenerationMode, handleGenerateChapters, handleGenerateFullBook, handleRebuildOutline, isRebuildingOutline,
         isAnalysisModalOpen, setIsAnalysisModalOpen, analysisData, isAnalyzing, handleOpenAnalysisModal, handleExecuteAnalysisAction,
         isStyleAnalysisModalOpen, setIsStyleAnalysisModalOpen, styleAnalysisResult, analyzingStyleChapterIndex, isAnalyzingStyle, handleAnalyzeChapterStyle, handleApplyStyleSuggestion,
         isCharacterVoiceAnalysisModalOpen, setIsCharacterVoiceAnalysisModalOpen, characterVoiceAnalysisResult, isAnalyzingCharacterVoice, handleAnalyzeCharacterVoice, handleApplyCharacterVoiceSuggestion,

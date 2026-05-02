@@ -1,7 +1,7 @@
 
 import { Book, AudiobookState } from '../types';
 import * as gemini from './gemini';
-import { db } from './db';
+import { db } from './apiClient';
 import { toastService } from './toastService';
 
 // --- Audio Helper Functions ---

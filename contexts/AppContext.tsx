@@ -1,11 +1,11 @@
 
 import React, { createContext, useState, useEffect, useCallback, ReactNode, useMemo } from 'react';
 import { Book, BookSnapshot, Macro, Series, AudiobookState, GeneralDoc, ChatMessage, SyncProvider } from '../types';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 import { toastService } from '../services/toastService';
 import { AudioPlayerService } from '../services/audioPlayerService';
 import { produce } from 'immer';
-import { isAiEnabled as checkAiEnabled } from '../services/gemini';
+import { checkServerAiStatus } from '../services/gemini';
 
 interface AppContextType {
     books: Book[];
@@ -25,7 +25,7 @@ interface AppContextType {
     createSnapshot: (book: Book, name: string) => Promise<void>;
     restoreSnapshot: (snapshot: BookSnapshot) => Promise<void>;
     deleteSnapshot: (snapshotId: string) => Promise<void>;
-    createNewSeriesAndFirstBook: (seriesTitle: string, firstBookTitle: string) => Promise<string>;
+    createNewSeriesAndFirstBook: (seriesTitle: string, firstBookTitle: string, extraBookData?: Partial<Book>) => Promise<string>;
     addBookToSeries: (bookId: string, seriesInfo: { seriesId?: string; newSeriesTitle?: string }) => Promise<void>;
     removeBookFromSeries: (bookId: string) => Promise<void>;
     reorderBooksInSeries: (seriesId: string, fromIndex: number, toIndex: number) => Promise<void>;
@@ -60,7 +60,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         currentParagraphIndex: -1, chapterProgress: 0, playbackRate: 1, totalParagraphsInChapter: 0,
     });
     
-    const isAiEnabled = checkAiEnabled();
+    const [isAiEnabled, setIsAiEnabled] = useState(true);
     
     const audioPlayerService = useMemo(() => new AudioPlayerService(setAudiobookState), []);
 
@@ -87,6 +87,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     }, []);
 
     useEffect(() => {
+        checkServerAiStatus().then(setIsAiEnabled).catch(() => setIsAiEnabled(false));
         fetchData();
         const handleVersionChange = () => {
             toastService.error("Database updated in another tab. Please reload.");
@@ -228,7 +229,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         await db.snapshots.delete(snapshotId);
     }, []);
 
-    const createNewSeriesAndFirstBook = useCallback(async (seriesTitle: string, firstBookTitle: string) => {
+    const createNewSeriesAndFirstBook = useCallback(async (seriesTitle: string, firstBookTitle: string, extraBookData?: Partial<Book>) => {
         const newSeries: Series = {
             id: crypto.randomUUID(),
             title: seriesTitle,
@@ -239,6 +240,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
             topic: firstBookTitle,
             seriesId: newSeries.id,
             seriesName: seriesTitle,
+            ...extraBookData,
         });
 
         newSeries.bookIds.push(newBookId);

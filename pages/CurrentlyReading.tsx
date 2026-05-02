@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AppContext } from '../contexts/AppContext';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 import { Book, ReadingProgress } from '../types';
 import ReadingBookCard from '../components/ReadingBookCard';
 import Icon from '../components/Icon';
@@ -165,7 +165,7 @@ const CurrentlyReading: React.FC = () => {
 
                 {/* Other Items Grid */}
                 {otherItems.length > 0 && (
-                    <section className="animate-fade-in" style={{ animationDelay: '0.2s' }}>
+                    <section className="animate-fade-in delay-200">
                         <div className="flex items-center space-x-4 mb-6">
                             <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-100">More in Progress</h2>
                             <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />

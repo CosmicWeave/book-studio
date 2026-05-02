@@ -1,6 +1,6 @@
 
 import { Book } from '../types';
-import { db } from './db';
+import { db } from './apiClient';
 import { conflictService } from './conflictService';
 import { toastService } from './toastService';
 
@@ -35,7 +35,7 @@ const subscribers: Set<Subscriber> = new Set();
 const getApiKey = async (): Promise<string> => {
     try {
         const setting = await db.settings.get(BACKUP_API_KEY_ID);
-        return setting?.value || '';
+        return (setting?.value as string) || '';
     } catch (e) {
         return '';
     }

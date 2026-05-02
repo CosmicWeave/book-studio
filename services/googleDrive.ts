@@ -1,6 +1,6 @@
 
 import { getCredentials, saveCredentials, clearCredentials, DISCOVERY_DOC, SCOPES } from './googleDriveConfig';
-import { db } from './db';
+import { db } from './apiClient';
 import { GoogleDriveFile } from '../types';
 
 // Types for Google Libraries

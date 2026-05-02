@@ -117,7 +117,7 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
                             <p className="text-xs text-zinc-500 dark:text-zinc-400">Ask me anything about your book</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors">
+                    <button aria-label="Close chat" onClick={onClose} className="p-2 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors">
                         <Icon name="CLOSE" className="w-5 h-5" />
                     </button>
                 </div>
@@ -229,8 +229,8 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
                          <div className="flex justify-start">
                             <div className="bg-zinc-100 dark:bg-zinc-800 p-3 rounded-2xl rounded-tl-none border border-zinc-200 dark:border-zinc-700 flex items-center space-x-1">
                                 <div className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce"></div>
-                                <div className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{animationDelay: '0.15s'}}></div>
-                                <div className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{animationDelay: '0.3s'}}></div>
+                                <div className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce delay-150"></div>
+                                <div className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce delay-300"></div>
                             </div>
                         </div>
                     )}
@@ -266,12 +266,12 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
                                 }
                             }}
                             placeholder="Ask about your story..."
-                            className="flex-grow bg-transparent border-none focus:ring-0 text-sm text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 resize-none max-h-32 py-2.5 px-2"
+                            className="flex-grow bg-transparent border-none focus:ring-0 text-sm text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 resize-none max-h-32 py-2.5 px-2 min-h-[40px]"
                             rows={1}
                             disabled={isLoading}
-                            style={{ minHeight: '40px' }}
                         />
                         <button 
+                            aria-label="Send message"
                             type="submit" 
                             disabled={isLoading || !input.trim()}
                             className="p-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-zinc-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed transition-colors mb-[1px]"

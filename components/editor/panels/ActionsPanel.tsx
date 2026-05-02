@@ -21,17 +21,23 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
         snapshots,
         handleGenerateChapters,
         handleGenerateFullBook,
+        generationMode,
+        setGenerationMode,
         setIsSnapshotsPanelOpen,
         handleExportPdf,
         setIsEpubModalOpen,
         createSnapshot,
         isGeneratingChapter,
-        isAiEnabled
+        isAiEnabled,
+        handleRebuildOutline,
+        isRebuildingOutline
     } = useBookEditor();
 
     // State for session tracking
     const initialWordsRef = useRef<number | null>(null);
     const [sessionWords, setSessionWords] = useState(0);
+    const [showRebuildPrompt, setShowRebuildPrompt] = useState(false);
+    const [rebuildCountInput, setRebuildCountInput] = useState('');
 
     if (!book) return null;
 
@@ -155,6 +161,25 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
                 {/* Generation Actions */}
                 {isAiEnabled && !isComplete ? (
                     <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-1 p-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40">
+                            <button
+                                onClick={() => setGenerationMode('full')}
+                                disabled={isGeneratingChapter !== null}
+                                className={`px-2 py-1.5 rounded-md text-xs font-semibold transition-colors ${generationMode === 'full' ? 'bg-indigo-600 text-white' : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+                                title="Generate with an extra validation and polish pass"
+                            >
+                                Full Validation
+                            </button>
+                            <button
+                                onClick={() => setGenerationMode('budget')}
+                                disabled={isGeneratingChapter !== null}
+                                className={`px-2 py-1.5 rounded-md text-xs font-semibold transition-colors ${generationMode === 'budget' ? 'bg-amber-600 text-white' : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+                                title="Single-pass generation to save tokens"
+                            >
+                                Budget Mode
+                            </button>
+                        </div>
+
                         <button 
                             onClick={() => handleGenerateChapters()} 
                             disabled={isGeneratingChapter !== null} 
@@ -184,9 +209,60 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
 
                 {/* Chapter List */}
                 <div className="border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden flex-grow max-h-64 flex flex-col">
-                    <div className="bg-zinc-50 dark:bg-zinc-900/50 px-3 py-2 border-b border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex-shrink-0">
-                        Outline
+                    <div className="bg-zinc-50 dark:bg-zinc-900/50 px-3 py-2 border-b border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex-shrink-0 flex items-center justify-between">
+                        <span>Outline</span>
+                        {isAiEnabled && (
+                            <button
+                                onClick={() => {
+                                    setRebuildCountInput(String(totalChapters));
+                                    setShowRebuildPrompt(v => !v);
+                                }}
+                                title="Rebuild outline with different chapter count"
+                                className="p-0.5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                                disabled={isRebuildingOutline || isGeneratingChapter !== null}
+                            >
+                                {isRebuildingOutline
+                                    ? <Icon name="ROTATE_CW" className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                                    : <Icon name="EDIT" className="w-3.5 h-3.5 text-zinc-400 hover:text-indigo-500" />}
+                            </button>
+                        )}
                     </div>
+                    {showRebuildPrompt && (
+                        <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 flex items-center gap-2">
+                            <input
+                                type="number"
+                                min={1}
+                                max={200}
+                                value={rebuildCountInput}
+                                onChange={e => setRebuildCountInput(e.target.value)}
+                                aria-label="Target chapter count"
+                                placeholder={String(totalChapters)}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                        const n = parseInt(rebuildCountInput, 10);
+                                        if (n >= 1 && n <= 200) { setShowRebuildPrompt(false); handleRebuildOutline(n); }
+                                        else toastService.error('Enter a number between 1 and 200.');
+                                    }
+                                    if (e.key === 'Escape') setShowRebuildPrompt(false);
+                                }}
+                                className="w-16 text-xs bg-white dark:bg-zinc-800 border border-amber-300 dark:border-amber-700 rounded px-2 py-1 font-semibold text-zinc-800 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                autoFocus
+                            />
+                            <button
+                                onClick={() => {
+                                    const n = parseInt(rebuildCountInput, 10);
+                                    if (n >= 1 && n <= 200) { setShowRebuildPrompt(false); handleRebuildOutline(n); }
+                                    else toastService.error('Enter a number between 1 and 200.');
+                                }}
+                                className="flex-1 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white rounded px-2 py-1 transition-colors whitespace-nowrap"
+                            >
+                                Rebuild
+                            </button>
+                            <button onClick={() => setShowRebuildPrompt(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-xs px-1">
+                                ✕
+                            </button>
+                        </div>
+                    )}
                     <ul className="overflow-y-auto bg-white dark:bg-zinc-800 divide-y divide-zinc-100 dark:divide-zinc-700/50 flex-grow">
                         {book.outline.map((ch, index) => {
                             const isWritten = index < writtenChapters;

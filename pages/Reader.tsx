@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useContext, useLayoutEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 import { Book, ReadingProgress, ReaderSettings, ChapterOutline, Bookmark } from '../types';
 import Loader from '../components/Loader';
 import Icon from '../components/Icon';
@@ -86,7 +86,7 @@ const Reader: React.FC<ReaderProps> = ({ bookId }) => {
                 if (bookData) {
                     setBook(bookData);
                     if (settingsData) {
-                        setSettings({ ...DEFAULT_SETTINGS, ...settingsData.value });
+                        setSettings({ ...DEFAULT_SETTINGS, ...(settingsData.value as object) });
                     }
                     if (progressData) {
                         latestProgressRef.current = progressData;
@@ -752,7 +752,7 @@ const Reader: React.FC<ReaderProps> = ({ bookId }) => {
                         settings.theme === 'sepia' ? 'bg-[#f4ecd8]/90 border-[#e3dcc8]' : 'bg-white/90 border-zinc-200'
                     }`}>
                         <div className="flex items-center space-x-1">
-                            <button onClick={() => navigate(backPath)} className="p-2 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors">
+                            <button onClick={() => navigate(backPath)} aria-label="Go back" className="p-2 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors">
                                 <Icon name="CHEVRON_LEFT" className="w-5 h-5" />
                             </button>
                             <button onClick={() => setIsTocOpen(true)} className="p-2 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors" title="Table of Contents">
@@ -822,7 +822,7 @@ const Reader: React.FC<ReaderProps> = ({ bookId }) => {
                         <div className={`relative w-80 max-w-[80vw] shadow-2xl flex flex-col animate-slide-in-left ${settings.theme === 'dark' ? 'bg-zinc-900 text-zinc-200' : 'bg-white text-zinc-800'}`}>
                             <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex justify-between items-center pt-[calc(1rem+env(safe-area-inset-top))]">
                                 <h2 className="font-bold text-lg">Contents</h2>
-                                <button onClick={() => setIsTocOpen(false)}><Icon name="CLOSE" className="w-5 h-5" /></button>
+                                <button aria-label="Close table of contents" onClick={() => setIsTocOpen(false)}><Icon name="CLOSE" className="w-5 h-5" /></button>
                             </div>
                             <div className="flex-1 overflow-y-auto p-2">
                                 {book.outline.map((chapter, i) => (
@@ -845,7 +845,7 @@ const Reader: React.FC<ReaderProps> = ({ bookId }) => {
                         <div className={`pointer-events-auto w-full sm:w-[480px] max-h-[85vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl shadow-2xl p-6 animate-slide-in-up ${settings.theme === 'dark' ? 'bg-zinc-900 text-zinc-200' : 'bg-white text-zinc-800'}`}>
                             <div className="flex justify-between items-center mb-6">
                                 <h2 className="text-xl font-bold">Display Settings</h2>
-                                <button onClick={() => setIsMenuOpen(false)} className="p-1 bg-black/5 dark:bg-white/10 rounded-full"><Icon name="CLOSE" className="w-5 h-5" /></button>
+                                <button aria-label="Close settings" onClick={() => setIsMenuOpen(false)} className="p-1 bg-black/5 dark:bg-white/10 rounded-full"><Icon name="CLOSE" className="w-5 h-5" /></button>
                             </div>
                             {/* Theme */}
                             <div className="space-y-3 mb-6">
@@ -884,23 +884,23 @@ const Reader: React.FC<ReaderProps> = ({ bookId }) => {
                             <div className="space-y-6">
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-sm"><span>Font Size</span><span className="opacity-60">{settings.fontSize}px</span></div>
-                                    <input type="range" min="14" max="32" step="1" value={settings.fontSize} onChange={e => handleSettingsChange('fontSize', parseInt(e.target.value))} className="w-full accent-indigo-600"/>
+                                    <input type="range" aria-label="Font size" min="14" max="32" step="1" value={settings.fontSize} onChange={e => handleSettingsChange('fontSize', parseInt(e.target.value))} className="w-full accent-indigo-600"/>
                                 </div>
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-sm"><span>Line Height</span><span className="opacity-60">{settings.lineHeight}</span></div>
-                                    <input type="range" min="1.2" max="2.2" step="0.1" value={settings.lineHeight} onChange={e => handleSettingsChange('lineHeight', parseFloat(e.target.value))} className="w-full accent-indigo-600"/>
+                                    <input type="range" aria-label="Line height" min="1.2" max="2.2" step="0.1" value={settings.lineHeight} onChange={e => handleSettingsChange('lineHeight', parseFloat(e.target.value))} className="w-full accent-indigo-600"/>
                                 </div>
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-sm"><span>Paragraph Spacing</span><span className="opacity-60">{settings.paragraphSpacing}em</span></div>
-                                    <input type="range" min="0.5" max="3" step="0.1" value={settings.paragraphSpacing} onChange={e => handleSettingsChange('paragraphSpacing', parseFloat(e.target.value))} className="w-full accent-indigo-600"/>
+                                    <input type="range" aria-label="Paragraph spacing" min="0.5" max="3" step="0.1" value={settings.paragraphSpacing} onChange={e => handleSettingsChange('paragraphSpacing', parseFloat(e.target.value))} className="w-full accent-indigo-600"/>
                                 </div>
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-sm"><span>Text Indent</span><span className="opacity-60">{settings.textIndent}em</span></div>
-                                    <input type="range" min="0" max="4" step="0.5" value={settings.textIndent} onChange={e => handleSettingsChange('textIndent', parseFloat(e.target.value))} className="w-full accent-indigo-600"/>
+                                    <input type="range" aria-label="Text indent" min="0" max="4" step="0.5" value={settings.textIndent} onChange={e => handleSettingsChange('textIndent', parseFloat(e.target.value))} className="w-full accent-indigo-600"/>
                                 </div>
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-sm"><span>Side Padding</span><span className="opacity-60">{settings.paddingX}rem</span></div>
-                                    <input type="range" min="0" max="10" step="0.5" value={settings.paddingX} onChange={e => handleSettingsChange('paddingX', parseFloat(e.target.value))} className="w-full accent-indigo-600"/>
+                                    <input type="range" aria-label="Side padding" min="0" max="10" step="0.5" value={settings.paddingX} onChange={e => handleSettingsChange('paddingX', parseFloat(e.target.value))} className="w-full accent-indigo-600"/>
                                 </div>
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-sm"><span>Alignment</span></div>
@@ -911,7 +911,7 @@ const Reader: React.FC<ReaderProps> = ({ bookId }) => {
                                 </div>
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-sm"><span>Max Width</span><span className="opacity-60">{settings.maxWidth}</span></div>
-                                    <select value={settings.maxWidth} onChange={e => handleSettingsChange('maxWidth', e.target.value)} className="w-full p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm">
+                                    <select aria-label="Max width" value={settings.maxWidth} onChange={e => handleSettingsChange('maxWidth', e.target.value)} className="w-full p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm">
                                         <option value="600px">Narrow (600px)</option>
                                         <option value="700px">Standard (700px)</option>
                                         <option value="900px">Wide (900px)</option>
@@ -923,7 +923,7 @@ const Reader: React.FC<ReaderProps> = ({ bookId }) => {
                             <div className="mt-8 pt-6 border-t border-zinc-200 dark:border-zinc-700 space-y-6">
                                 <div className="flex items-center justify-between">
                                     <div><p className="font-medium">Paginated View</p><p className="text-xs opacity-60">Read page by page instead of scrolling</p></div>
-                                    <button onClick={() => handleSettingsChange('viewMode', settings.viewMode === 'scroll' ? 'paginate' : 'scroll')} className={`w-12 h-6 rounded-full transition-colors relative ${settings.viewMode === 'paginate' ? 'bg-indigo-600' : 'bg-zinc-300 dark:bg-zinc-600'}`}>
+                                    <button aria-label="Toggle pagination mode" onClick={() => handleSettingsChange('viewMode', settings.viewMode === 'scroll' ? 'paginate' : 'scroll')} className={`w-12 h-6 rounded-full transition-colors relative ${settings.viewMode === 'paginate' ? 'bg-indigo-600' : 'bg-zinc-300 dark:bg-zinc-600'}`}>
                                         <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${settings.viewMode === 'paginate' ? 'translate-x-6' : 'translate-x-0'}`} />
                                     </button>
                                 </div>

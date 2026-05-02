@@ -1,0 +1,125 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Book {
+  id                          String  @id @db.VarChar(100)
+  topic                       String  @db.Text
+  subtitle                    String? @db.Text
+  author                      String? @db.Text
+  description                 String? @db.LongText
+  instructions                String  @db.LongText
+  wordCountGoal               Int?
+  generateImages              Boolean @default(false)
+  imageGenerationInstructions String  @db.Text
+  voiceStyleInstructions      String? @db.Text
+  aiPersona                   String? @db.VarChar(100)
+  status                      String  @default("configuring") @db.VarChar(20)
+  deletedAt                   Float?
+  outline                     Json    @default("[]")
+  content                     Json    @default("[]")
+  createdAt                   Float
+  updatedAt                   Float
+  coverImage                  String? @db.LongText
+  seriesId                    String? @db.VarChar(100)
+  seriesName                  String? @db.Text
+  publisher                   String? @db.Text
+  publicationDate             String? @db.VarChar(50)
+  language                    String? @db.VarChar(20)
+  creationConfig              Json?
+  knowledgeBase               Json?
+  bookChatHistory             Json?
+
+  @@map("books")
+}
+
+model GeneralDoc {
+  id        String @id @db.VarChar(100)
+  title     String @db.Text
+  content   String @db.LongText
+  createdAt Float
+  updatedAt Float
+
+  @@map("documents")
+}
+
+model InstructionTemplate {
+  id     String @id @db.VarChar(100)
+  name   String @db.Text
+  prompt String @db.LongText
+
+  @@map("instructions")
+}
+
+model StylePreset {
+  id          String @id @db.VarChar(100)
+  name        String @db.Text
+  description String @db.Text
+
+  @@map("styles")
+}
+
+model BookSnapshot {
+  id        String @id @db.VarChar(100)
+  bookId    String @db.VarChar(100)
+  name      String @db.Text
+  bookData  String @db.LongText
+  createdAt Float
+
+  @@index([bookId])
+  @@map("snapshots")
+}
+
+model Macro {
+  id      String @id @db.VarChar(100)
+  name    String @db.Text
+  actions Json   @default("[]")
+
+  @@map("macros")
+}
+
+model BookSeries {
+  id                  String  @id @db.VarChar(100)
+  title               String  @db.Text
+  description         String? @db.Text
+  bookIds             Json    @default("[]")
+  sharedKnowledgeBase Json?
+
+  @@map("series")
+}
+
+model ReadingProgress {
+  bookId       String  @id @db.VarChar(100)
+  scroll       Float?
+  paginate     Float?
+  percentage   Float?
+  updatedAt    Float
+  chapterIndex Int?
+  elementIndex Int?
+  bookmarks    Json    @default("[]")
+  bookmark     Json?
+
+  @@map("reading_progress")
+}
+
+model Setting {
+  id    String @id @db.VarChar(200)
+  value Json
+
+  @@map("settings")
+}
+
+model History {
+  id    String @id @db.VarChar(100)
+  value Json
+
+  @@map("history")
+}

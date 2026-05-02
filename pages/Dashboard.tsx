@@ -14,7 +14,7 @@ import CreateSeriesModal from '../components/CreateSeriesModal';
 import AddToSeriesModal from '../components/AddToSeriesModal';
 import BookCreationModal from '../components/BookCreationModal';
 import { modalService } from '../services/modalService';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 
 const StatCard: React.FC<{ label: string; value: number; icon: IconName; colorClass: string }> = ({ label, value, icon, colorClass }) => (
     <div className="bg-white dark:bg-zinc-800 p-4 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-sm flex items-center space-x-4 hover:shadow-md transition-all">
@@ -381,6 +381,7 @@ const Dashboard: React.FC = () => {
                     </div>
                     <div className="flex-shrink-0">
                         <select
+                            aria-label="Sort books by"
                             value={sortOption}
                             onChange={(e) => setSortOption(e.target.value as SortOption)}
                             className="block w-full pl-4 pr-10 py-3 border border-zinc-300 dark:border-zinc-700 rounded-xl bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-sm cursor-pointer"

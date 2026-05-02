@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../services/db';
+import { db } from '../services/apiClient';
 import Loader from './Loader';
 import { ICONS } from '../constants';
 import { Book } from '../types';
