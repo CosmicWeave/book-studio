@@ -39,7 +39,7 @@ const CreateSeriesModal: React.FC<CreateSeriesModalProps> = ({ isOpen, onClose }
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 animate-fade-in" onClick={onClose}>
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[10001] p-4 animate-fade-in" onClick={onClose}>
             <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-2xl w-full max-w-lg flex flex-col border border-zinc-200 dark:border-zinc-700" onClick={e => e.stopPropagation()}>
                 <div className="flex justify-between items-center p-4 border-b border-zinc-200 dark:border-zinc-700">
                     <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-100">Create a New Book Series</h2>

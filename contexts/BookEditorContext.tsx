@@ -99,6 +99,7 @@ interface BookEditorContextType {
     generationMode: GenerationMode;
     setGenerationMode: (mode: GenerationMode) => void;
     handleGenerateChapters: () => Promise<void>;
+    handleGenerateSpecificChapter: (index: number, targetWordCount?: number) => Promise<void>;
     handleGenerateFullBook: () => Promise<void>;
     handleRebuildOutline: (targetChapterCount: number) => Promise<void>;
     isRebuildingOutline: boolean;
@@ -157,6 +158,7 @@ interface BookEditorContextType {
     isChatLoading: boolean;
     handleApplyEdit: (chapterIndex: number, newContent: string) => void;
     handleExecuteTool: (functionCall: FunctionCall) => void;
+    handleCreateBookFromChat: (args: { topic: string; description: string; instructions?: string; outline: { title: string; summary: string }[]; addToCurrentSeries?: boolean }) => Promise<void>;
 
     // Tiptap Editors Management
     activeEditorInstance: Editor | null;
@@ -254,7 +256,8 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         stopAudiobook,
         skipAudiobookChapter,
         audiobookState,
-        isAiEnabled
+        isAiEnabled,
+        createNewBook: appCreateNewBook,
     } = appContext;
 
     // --- STATE ---
@@ -451,7 +454,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     }, []);
     
     // Other handlers
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { const { name, value, type } = e.target; const checked = (e.target as HTMLInputElement).checked; updateLocalBook({ [name]: type === 'checkbox' ? checked : value }); };
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { const { name, value, type } = e.target; const checked = (e.target as HTMLInputElement).checked; const coerced = type === 'checkbox' ? checked : type === 'number' ? (value === '' ? undefined : Number(value)) : value; updateLocalBook({ [name]: coerced }); };
     const handleTitleChange = (e: React.FocusEvent<HTMLElement>) => { updateLocalBook({ topic: e.currentTarget.textContent || '' }); };
     const handleSubtitleChange = (e: React.FocusEvent<HTMLElement>) => { updateLocalBook({ subtitle: e.currentTarget.textContent || '' }); };
     const handleChapterTitleChange = (e: React.FocusEvent<HTMLElement>, index: number) => { if (!book) return; const newOutline = produce(book.outline, draft => { draft[index].title = e.currentTarget.textContent || ''; }); updateLocalBook({ outline: newOutline }); const newContent = produce(book.content, draft => { if (draft[index]) { draft[index].title = e.currentTarget.textContent || ''; } }); updateLocalBook({ content: newContent }); };
@@ -509,7 +512,99 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         }
     };
 
+    const handleCreateBookFromChat = useCallback(async (args: {
+        topic: string;
+        description: string;
+        instructions?: string;
+        outline: { title: string; summary: string }[];
+        addToCurrentSeries?: boolean;
+    }) => {
+        const chapterOutlines = (args.outline || []).map(ch => ({
+            id: crypto.randomUUID(),
+            title: ch.title,
+            summary: ch.summary,
+            status: 'todo' as const,
+        }));
+        const chapterContents = chapterOutlines.map(ch => ({
+            title: ch.title,
+            htmlContent: '',
+        }));
+        const newBookData: Partial<import('../types').Book> = {
+            topic: args.topic,
+            description: args.description,
+            instructions: args.instructions || '',
+            outline: chapterOutlines,
+            content: chapterContents,
+            status: 'draft',
+        };
+        if (args.addToCurrentSeries && book?.seriesId) {
+            newBookData.seriesId = book.seriesId;
+            newBookData.seriesName = book.seriesName;
+        }
+        const newId = await appCreateNewBook(newBookData);
+        toastService.success(`New book created: ${args.topic}`);
+        navigate(`/editor/${newId}`);
+    }, [book, appCreateNewBook, navigate]);
+
     // ... (Existing methods omitted for brevity)
+    const handleGenerateSpecificChapter = async (index: number, targetWordCount?: number) => {
+        if (!book) return;
+        setIsGeneratingChapter(index);
+        setActiveChapterIndex(index);
+        document.getElementById(`chapter-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        try {
+            const chapterOutline = book.outline[index];
+            let generatedHtml = '';
+            const wordCount = targetWordCount ?? (book.wordCountGoal && book.outline.length ? Math.round(book.wordCountGoal / book.outline.length) : 1000);
+            // Clear existing content before regenerating
+            setBook(prev => {
+                if (!prev) return null;
+                const newContent = [...prev.content];
+                if (!newContent[index]) newContent[index] = { title: chapterOutline.title, htmlContent: '' };
+                else newContent[index] = { ...newContent[index], htmlContent: '' };
+                return { ...prev, content: newContent };
+            });
+            await gemini.generateChapterContent(
+                book.topic,
+                book.instructions,
+                book.knowledgeBase,
+                seriesKnowledgeBase,
+                chapterOutline,
+                book.bookChatHistory || [],
+                (chunk) => {
+                    generatedHtml += chunk;
+                    setBook(prev => {
+                        if (!prev) return null;
+                        const newContent = [...prev.content];
+                        const currentHtml = newContent[index]?.htmlContent || '';
+                        newContent[index] = { title: chapterOutline.title, htmlContent: currentHtml + chunk };
+                        return { ...prev, content: newContent };
+                    });
+                },
+                book.language || 'en',
+                wordCount
+            );
+            if (generationMode === 'full' && generatedHtml.trim()) {
+                const polished = await gemini.validateAndPolishChapterContent(
+                    generatedHtml.trim(),
+                    book.topic,
+                    chapterOutline,
+                    book.instructions,
+                    book.knowledgeBase,
+                    seriesKnowledgeBase,
+                    book.language || 'en'
+                );
+                handleContentChange(index, polished);
+            }
+            toastService.success(`Chapter "${chapterOutline.title}" generated.`);
+            setSaveStatus('unsaved');
+        } catch (e: any) {
+            toastService.error(`Generation failed: ${e.message}`);
+        } finally {
+            setIsGeneratingChapter(null);
+        }
+    };
+
     const handleGenerateChapters = async () => {
         if (!book) return;
         const targetIndex = book.content.length < book.outline.length ? book.content.length : -1;
@@ -545,7 +640,8 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                         return { ...prev, content: newContent };
                     });
                 },
-                book.language || 'en'
+                book.language || 'en',
+                book.wordCountGoal && book.outline.length ? Math.round(book.wordCountGoal / book.outline.length) : 1000
             );
 
             if (generationMode === 'full') {
@@ -629,7 +725,8 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                             return { ...prev, content: newContent };
                         });
                     },
-                    book.language || 'en'
+                    book.language || 'en',
+                    book.wordCountGoal && book.outline.length ? Math.round(book.wordCountGoal / book.outline.length) : 1000
                 );
 
                 if (generationMode === 'full') {
@@ -886,13 +983,13 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         handleSaveToDB, handleSaveAndSync,
         isSnapshotsPanelOpen, setIsSnapshotsPanelOpen, snapshots, createSnapshot, handleRestoreSnapshot, handleDeleteSnapshot,
         isBrainstormModalOpen, setIsBrainstormModalOpen, handleStartOutlineBrainstorm, handleBrainstormComplete,
-        isGeneratingChapter, generationMode, setGenerationMode, handleGenerateChapters, handleGenerateFullBook, handleRebuildOutline, isRebuildingOutline,
+        isGeneratingChapter, generationMode, setGenerationMode, handleGenerateChapters, handleGenerateSpecificChapter, handleGenerateFullBook, handleRebuildOutline, isRebuildingOutline,
         isAnalysisModalOpen, setIsAnalysisModalOpen, analysisData, isAnalyzing, handleOpenAnalysisModal, handleExecuteAnalysisAction,
         isStyleAnalysisModalOpen, setIsStyleAnalysisModalOpen, styleAnalysisResult, analyzingStyleChapterIndex, isAnalyzingStyle, handleAnalyzeChapterStyle, handleApplyStyleSuggestion,
         isCharacterVoiceAnalysisModalOpen, setIsCharacterVoiceAnalysisModalOpen, characterVoiceAnalysisResult, isAnalyzingCharacterVoice, handleAnalyzeCharacterVoice, handleApplyCharacterVoiceSuggestion,
         isPlotHoleModalOpen, setIsPlotHoleModalOpen, plotHoleResults, isAnalyzingPlotHoles, handleAnalyzePlotHoles,
         isLoreConsistencyModalOpen, setIsLoreConsistencyModalOpen, loreConsistencyResults, isAnalyzingLore, handleAnalyzeLoreConsistency, handleApplyLoreSuggestion,
-        isChatOpen, setIsChatOpen, chatMessages, handleSendChatMessage, isChatLoading, handleApplyEdit, handleExecuteTool,
+        isChatOpen, setIsChatOpen, chatMessages, handleSendChatMessage, isChatLoading, handleApplyEdit, handleExecuteTool, handleCreateBookFromChat,
         activeEditorInstance, setActiveEditorInstance, registerEditor, unregisterEditor, handleAssistantAction, isAssistantLoading,
         handleAddChapter, handleDeleteChapter, handleMoveChapter, handleMergeChapters, handleUpdateChapterOutline,
         isDeepAnalysisModalOpen, setIsDeepAnalysisModalOpen, deepAnalysisResult, deepAnalysisType, handleApplyShowTellSuggestion,

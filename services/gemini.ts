@@ -290,6 +290,34 @@ const deleteChapterTool: FunctionDeclaration = {
     }
 };
 
+const createNewBookTool: FunctionDeclaration = {
+    name: 'createNewBook',
+    description: 'Proposes creating a brand-new, separate book based on the conversation. ALWAYS use this tool (never just text) when the user asks to: create a new book, add a book to a series, write from a new perspective, create a companion novel, prequel, sequel, spin-off, or any other separate book. The user will be shown a preview and must confirm before anything is created.',
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            topic: { type: Type.STRING, description: 'The title of the new book.' },
+            description: { type: Type.STRING, description: 'A compelling back-cover description of the new book (2–4 sentences).' },
+            instructions: { type: Type.STRING, description: 'Writing style and tone instructions for the new book (e.g., genre, POV, mood, inspirations).' },
+            outline: {
+                type: Type.ARRAY,
+                description: 'A high-level chapter outline for the new book.',
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING, description: 'Chapter title.' },
+                        summary: { type: Type.STRING, description: 'One-sentence chapter summary.' }
+                    },
+                    required: ['title', 'summary']
+                }
+            },
+            addToCurrentSeries: { type: Type.BOOLEAN, description: 'Set to true if this new book should be added to the same series as the current book.' },
+            proposalReason: { type: Type.STRING, description: 'A brief explanation of why you are proposing this new book (shown to the user).' }
+        },
+        required: ['topic', 'description', 'outline', 'proposalReason']
+    }
+};
+
 export const streamChatWithBook = async (
     userMessage: string,
     history: Content[],
@@ -338,6 +366,7 @@ ${bookContext.currentChapter.content.substring(0, 15000)}... (truncated)
 - **IMPORTANT:** If the user explicitly asks you to "rewrite", "edit", "fix", or "change" the content of the current chapter, you MUST use the \`updateChapter\` tool to propose the new content.
 - When using \`updateChapter\`, ensure the \`newContent\` is the complete, fully formed HTML for the chapter. 
 - You also have tools to manage the book structure: \`updateBookMetadata\` (title, author), \`updateChapterMetadata\` (chapter titles, parts), \`addChapter\`, and \`deleteChapter\`. Use these when the user asks to restructure the book.
+- **IMPORTANT:** When the user asks to create, add, or generate a new book, a new perspective, a companion novel, a sequel, a prequel, or any other new separate book (including adding one to the current series), you MUST use the \`createNewBook\` tool. Do not just describe the book in text — always use the tool so the user can review and confirm. Include a full chapter outline and a \`proposalReason\` explaining the concept. Propose approximately ${bookContext.outline.length} chapters in the outline (matching the current book's length) unless the user specifies a different number.
 - Format your text responses using Markdown (bold, italics, lists, etc.) for readability.
 `;
 
@@ -346,7 +375,7 @@ ${bookContext.currentChapter.content.substring(0, 15000)}... (truncated)
         history: validHistory,
         config: {
             systemInstruction: systemPrompt,
-            tools: [{ functionDeclarations: [updateChapterTool, updateBookMetadataTool, updateChapterMetadataTool, addChapterTool, deleteChapterTool] }]
+            tools: [{ functionDeclarations: [updateChapterTool, updateBookMetadataTool, updateChapterMetadataTool, addChapterTool, deleteChapterTool, createNewBookTool] }]
         },
     });
 
@@ -1062,7 +1091,8 @@ export const generateChapterContent = async (
     outline: ChapterOutline,
     chatHistory: Content[],
     onChunk: (text: string) => void,
-    language: string = 'en'
+    language: string = 'en',
+    targetWordCount: number = 1000
 ): Promise<void> => {
     const ai = getAi();
     const knowledgeBaseContext = formatKnowledgeBaseForPrompt(bookKnowledgeBase, seriesKnowledgeBase);
@@ -1071,6 +1101,7 @@ export const generateChapterContent = async (
     **Chapter Title:** ${outline.title}
     **Chapter Summary:** ${outline.summary}
     **Writing Style:** ${instructions}
+    **Target Length:** Approximately ${targetWordCount} words.
     ${knowledgeBaseContext}
     
     Write the content in HTML format suitable for a book (using <p>, <h2>, etc.). Do not include the chapter title as an <h1>, start directly with the content.`;

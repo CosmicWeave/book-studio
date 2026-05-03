@@ -53,7 +53,7 @@ const ChapterAnalysisModal: React.FC<ChapterAnalysisModalProps> = ({ isOpen, onC
     );
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 animate-fade-in" onClick={onClose}>
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[10001] p-4 animate-fade-in" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 w-full max-w-4xl max-h-[90vh] flex flex-col border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
                 <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200 dark:border-gray-700">
                     <div>

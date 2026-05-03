@@ -6,6 +6,7 @@ import Icon from '../Icon';
 import { marked } from 'marked';
 import { useBookEditor } from '../../contexts/BookEditorContext';
 import DiffModal from './DiffModal';
+import NewBookFromChatModal from './NewBookFromChatModal';
 
 interface ChatModalProps {
     isOpen: boolean;
@@ -25,7 +26,7 @@ const QUICK_PROMPTS = [
 ];
 
 const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initialMessages, onSendMessage, isLoading }) => {
-    const { chatMessages, book, handleApplyEdit, handleExecuteTool } = useBookEditor(); // Use live messages from context
+    const { chatMessages, book, handleApplyEdit, handleExecuteTool, handleCreateBookFromChat } = useBookEditor(); // Use live messages from context
     const [input, setInput] = useState('');
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const shouldAutoScrollRef = useRef(true);
@@ -33,6 +34,12 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
     
     // State for reviewing edits
     const [reviewData, setReviewData] = useState<{ chapterIndex: number, newContent: string, description: string } | null>(null);
+    // Track dismissed "create new book" proposals by message index
+    const [dismissedProposals, setDismissedProposals] = useState<Set<number>>(new Set());
+    // Per-card editable chapter counts (keyed by message index)
+    const [localChapterCounts, setLocalChapterCounts] = useState<Record<number, number>>({});
+    // Currently open new-book modal proposal
+    const [newBookProposal, setNewBookProposal] = useState<{ index: number; args: any; chapterCount: number } | null>(null);
     
     // Use chatMessages from context if available (for streaming), fallback to props
     const messagesToRender = chatMessages || initialMessages;
@@ -101,6 +108,24 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
                 />
             )}
 
+            {/* New Book from Chat Modal */}
+            {newBookProposal && (
+                <NewBookFromChatModal
+                    isOpen={!!newBookProposal}
+                    onClose={() => setNewBookProposal(null)}
+                    proposalData={{
+                        topic: newBookProposal.args.topic,
+                        description: newBookProposal.args.description,
+                        instructions: newBookProposal.args.instructions,
+                        outline: newBookProposal.args.outline || [],
+                        addToCurrentSeries: newBookProposal.args.addToCurrentSeries,
+                        proposalReason: newBookProposal.args.proposalReason,
+                    }}
+                    chapterCount={newBookProposal.chapterCount}
+                    currentBook={book}
+                />
+            )}
+
             {/* Backdrop */}
             <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[60]" onClick={onClose} />
             
@@ -139,6 +164,60 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
                             if (part && 'functionCall' in part && part.functionCall) {
                                 const fc = part.functionCall;
                                 const args = fc.args as any;
+
+                                if (fc.name === 'createNewBook') {
+                                    if (dismissedProposals.has(index)) return null;
+                                    const defaultCount = Array.isArray(args.outline) ? args.outline.length : (book?.outline?.length || 10);
+                                    const localCount = localChapterCounts[index] ?? defaultCount;
+                                    return (
+                                        <div key={index} className="flex justify-start w-full">
+                                            <div className="max-w-[90%] bg-white dark:bg-zinc-800 rounded-2xl rounded-tl-none border-2 border-violet-200 dark:border-violet-900/50 p-4 shadow-md">
+                                                <div className="flex items-center space-x-2 mb-2">
+                                                    <div className="p-1.5 bg-violet-100 dark:bg-violet-900 rounded-full text-violet-600 dark:text-violet-300">
+                                                        <Icon name="BOOK" className="w-4 h-4" />
+                                                    </div>
+                                                    <h3 className="font-bold text-zinc-800 dark:text-zinc-100 text-sm">Proposed New Book</h3>
+                                                </div>
+                                                {args.proposalReason && (
+                                                    <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-1 italic">{args.proposalReason}</p>
+                                                )}
+                                                <p className="font-semibold text-zinc-800 dark:text-zinc-100 text-sm mb-1">{args.topic}</p>
+                                                <p className="text-xs text-zinc-600 dark:text-zinc-400 mb-3 line-clamp-3">{args.description}</p>
+                                                {/* Editable chapter count */}
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <span className="text-xs text-violet-600 dark:text-violet-400">Chapters:</span>
+                                                    <button
+                                                        onClick={() => setLocalChapterCounts(prev => ({ ...prev, [index]: Math.max(1, (prev[index] ?? defaultCount) - 1) }))}
+                                                        className="w-6 h-6 rounded border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 flex items-center justify-center text-xs hover:bg-violet-50 dark:hover:bg-violet-900/30 transition-colors"
+                                                    >−</button>
+                                                    <span className="text-xs font-bold text-violet-700 dark:text-violet-300 min-w-[20px] text-center">{localCount}</span>
+                                                    <button
+                                                        onClick={() => setLocalChapterCounts(prev => ({ ...prev, [index]: Math.min(200, (prev[index] ?? defaultCount) + 1) }))}
+                                                        className="w-6 h-6 rounded border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 flex items-center justify-center text-xs hover:bg-violet-50 dark:hover:bg-violet-900/30 transition-colors"
+                                                    >+</button>
+                                                </div>
+                                                {args.addToCurrentSeries && book?.seriesName && (
+                                                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">Part of series: <span className="font-medium">{book.seriesName}</span></p>
+                                                )}
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => setDismissedProposals(prev => new Set([...prev, index]))}
+                                                        className="flex-1 py-2 bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-sm font-semibold rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-600 transition-colors"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setNewBookProposal({ index, args, chapterCount: localCount })}
+                                                        className="flex-1 py-2 bg-violet-600 text-white text-sm font-semibold rounded-lg hover:bg-violet-700 transition-colors flex items-center justify-center space-x-1"
+                                                    >
+                                                        <span>Create Post</span>
+                                                        <Icon name="CHEVRON_RIGHT" className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                }
 
                                 if (fc.name === 'updateChapter') {
                                     return (

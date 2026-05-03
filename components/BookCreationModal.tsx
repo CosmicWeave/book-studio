@@ -73,6 +73,21 @@ const BookCreationModal: React.FC<BookCreationModalProps> = ({ isOpen, onClose }
     }, [isOpen, isAiEnabled]);
 
     useEffect(() => {
+        if (!isOpen) return;
+
+        const previousBodyOverflow = document.body.style.overflow;
+        const previousHtmlOverflow = document.documentElement.style.overflow;
+
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+
+        return () => {
+            document.body.style.overflow = previousBodyOverflow;
+            document.documentElement.style.overflow = previousHtmlOverflow;
+        };
+    }, [isOpen]);
+
+    useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [uiMessages, mode]);
 
@@ -615,7 +630,7 @@ const BookCreationModal: React.FC<BookCreationModalProps> = ({ isOpen, onClose }
     );
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10003] p-4 animate-fade-in" onClick={onClose}>
             <div className="bg-white dark:bg-zinc-800 w-full max-w-4xl h-[80vh] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                 {/* Header */}
                 <div className="flex justify-between items-center p-4 border-b border-zinc-200 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/50">

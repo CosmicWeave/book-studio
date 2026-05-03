@@ -21,6 +21,7 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
         snapshots,
         handleGenerateChapters,
         handleGenerateFullBook,
+        handleGenerateSpecificChapter,
         generationMode,
         setGenerationMode,
         setIsSnapshotsPanelOpen,
@@ -30,7 +31,8 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
         isGeneratingChapter,
         isAiEnabled,
         handleRebuildOutline,
-        isRebuildingOutline
+        isRebuildingOutline,
+        handleInputChange
     } = useBookEditor();
 
     // State for session tracking
@@ -38,13 +40,16 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
     const [sessionWords, setSessionWords] = useState(0);
     const [showRebuildPrompt, setShowRebuildPrompt] = useState(false);
     const [rebuildCountInput, setRebuildCountInput] = useState('');
+    const [showWordGoalInput, setShowWordGoalInput] = useState(false);
+    const [wordGoalInput, setWordGoalInput] = useState('');
+    const [chapterGenPopover, setChapterGenPopover] = useState<{ index: number; wordCount: string } | null>(null);
 
     if (!book) return null;
 
     // Calculations
     const totalChapters = book.outline.length;
-    const writtenChapters = book.content.length;
-    const nextChapterIndex = writtenChapters;
+    const writtenChapters = book.content.filter(c => c?.htmlContent?.trim()).length;
+    const nextChapterIndex = book.content.findIndex(c => !c?.htmlContent?.trim());
     const isComplete = book.status === 'complete';
     const progressPercentage = Math.round((writtenChapters / totalChapters) * 100) || 0;
 
@@ -134,8 +139,55 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
                         <p className="text-lg font-bold text-indigo-700 dark:text-indigo-200">+{sessionWords.toLocaleString()}</p>
                     </div>
                     <div className="bg-white dark:bg-zinc-700/50 p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700">
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-1">Goal</p>
-                        <p className="text-lg font-bold text-zinc-800 dark:text-zinc-100">{wordCountPercentage}%</p>
+                        <div className="flex items-center justify-between mb-1">
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">Goal</p>
+                            <button
+                                onClick={() => { setWordGoalInput(String(book.wordCountGoal || '')); setShowWordGoalInput(v => !v); }}
+                                className="text-zinc-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
+                                title="Set word count goal"
+                            >
+                                <Icon name="EDIT" className="w-3 h-3" />
+                            </button>
+                        </div>
+                        {showWordGoalInput ? (
+                            <div className="flex items-center gap-1 mt-1">
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={wordGoalInput}
+                                    onChange={e => setWordGoalInput(e.target.value)}
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter') {
+                                            const val = parseInt(wordGoalInput);
+                                            if (!isNaN(val) && val > 0) {
+                                                handleInputChange({ target: { name: 'wordCountGoal', value: String(val), type: 'number' } } as any);
+                                            }
+                                            setShowWordGoalInput(false);
+                                        } else if (e.key === 'Escape') {
+                                            setShowWordGoalInput(false);
+                                        }
+                                    }}
+                                    className="w-full text-sm font-bold bg-transparent border-b border-indigo-400 outline-none text-zinc-800 dark:text-zinc-100"
+                                    autoFocus
+                                    placeholder="e.g. 80000"
+                                />
+                                <button
+                                    onClick={() => {
+                                        const val = parseInt(wordGoalInput);
+                                        if (!isNaN(val) && val > 0) {
+                                            handleInputChange({ target: { name: 'wordCountGoal', value: String(val), type: 'number' } } as any);
+                                        }
+                                        setShowWordGoalInput(false);
+                                    }}
+                                    className="text-indigo-500 hover:text-indigo-700 flex-shrink-0 text-sm font-bold"
+                                    title="Confirm"
+                                >✓</button>
+                            </div>
+                        ) : (
+                            <p className="text-lg font-bold text-zinc-800 dark:text-zinc-100">
+                                {wordCountGoal > 0 ? `${wordCountPercentage}%` : <span className="text-sm text-zinc-400">—</span>}
+                            </p>
+                        )}
                     </div>
                 </div>
 
@@ -265,19 +317,90 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
                     )}
                     <ul className="overflow-y-auto bg-white dark:bg-zinc-800 divide-y divide-zinc-100 dark:divide-zinc-700/50 flex-grow">
                         {book.outline.map((ch, index) => {
-                            const isWritten = index < writtenChapters;
+                            const isWritten = !!(book.content[index]?.htmlContent?.trim());
+                            const isGeneratingThis = isGeneratingChapter === index;
+                            const isExpanded = chapterGenPopover?.index === index;
+                            const defaultWordCount = book.wordCountGoal && book.outline.length
+                                ? Math.round(book.wordCountGoal / book.outline.length)
+                                : 1000;
                             return (
-                                <li 
-                                    key={index} 
-                                    onClick={() => isWritten && handleChapterJump(index)}
-                                    className={`px-3 py-2 flex items-center space-x-3 text-sm transition-colors ${isWritten ? 'cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-700/50' : 'opacity-50 cursor-default'}`}
-                                >
-                                    <span className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-medium ${isWritten ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-700'}`}>
-                                        {isWritten ? '✓' : index + 1}
-                                    </span>
-                                    <span className={`truncate flex-grow ${isWritten ? 'text-zinc-700 dark:text-zinc-200' : 'text-zinc-500 dark:text-zinc-500'}`}>
-                                        {ch.title}
-                                    </span>
+                                <li key={index} className="text-sm transition-colors">
+                                    <div
+                                        onClick={() => isWritten && !isExpanded && handleChapterJump(index)}
+                                        className={`px-3 py-2 flex items-center space-x-2 transition-colors group ${isWritten && !isExpanded ? 'cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-700/50' : 'cursor-default'}`}
+                                    >
+                                        <span className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-medium ${isWritten ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-700'}`}>
+                                            {isGeneratingThis
+                                                ? <Icon name="ROTATE_CW" className="w-3 h-3 animate-spin text-indigo-500" />
+                                                : isWritten ? '✓' : index + 1}
+                                        </span>
+                                        <span className={`truncate flex-grow ${isWritten ? 'text-zinc-700 dark:text-zinc-200' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                                            {ch.title}
+                                        </span>
+                                        {isAiEnabled && !isGeneratingThis && (
+                                            <button
+                                                onClick={e => {
+                                                    e.stopPropagation();
+                                                    if (isExpanded) {
+                                                        setChapterGenPopover(null);
+                                                    } else {
+                                                        setChapterGenPopover({ index, wordCount: String(defaultWordCount) });
+                                                    }
+                                                }}
+                                                disabled={isGeneratingChapter !== null}
+                                                title={isWritten ? 'Regenerate chapter' : 'Generate chapter'}
+                                                className={`flex-shrink-0 p-1 rounded transition-colors ${
+                                                    isExpanded
+                                                        ? 'opacity-100 text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
+                                                        : 'opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-indigo-500'
+                                                } disabled:opacity-30`}
+                                            >
+                                                <Icon name="WAND" className="w-3.5 h-3.5" />
+                                            </button>
+                                        )}
+                                    </div>
+                                    {isExpanded && (
+                                        <div className="px-3 pb-2 pt-1.5 bg-indigo-50 dark:bg-indigo-900/20 border-t border-indigo-100 dark:border-indigo-800">
+                                            <div className="flex items-center gap-1.5">
+                                                <label className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap">Words:</label>
+                                                <input
+                                                    type="number"
+                                                    min={100}
+                                                    max={10000}
+                                                    aria-label="Target word count for this chapter"
+                                                    value={chapterGenPopover?.wordCount ?? String(defaultWordCount)}
+                                                    onChange={e => setChapterGenPopover(prev => prev ? { ...prev, wordCount: e.target.value } : null)}
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter') {
+                                                            const wc = parseInt(chapterGenPopover?.wordCount || '', 10);
+                                                            setChapterGenPopover(null);
+                                                            handleGenerateSpecificChapter(index, isNaN(wc) ? defaultWordCount : wc);
+                                                        }
+                                                        if (e.key === 'Escape') setChapterGenPopover(null);
+                                                    }}
+                                                    className="w-16 text-xs bg-white dark:bg-zinc-800 border border-indigo-200 dark:border-indigo-700 rounded px-2 py-1 font-semibold text-zinc-800 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                    autoFocus
+                                                />
+                                                <button
+                                                    onClick={() => {
+                                                        const wc = parseInt(chapterGenPopover?.wordCount || '', 10);
+                                                        setChapterGenPopover(null);
+                                                        handleGenerateSpecificChapter(index, isNaN(wc) ? defaultWordCount : wc);
+                                                    }}
+                                                    disabled={isGeneratingChapter !== null}
+                                                    className="flex-1 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded px-2 py-1 transition-colors whitespace-nowrap flex items-center justify-center gap-1 disabled:opacity-40"
+                                                >
+                                                    <Icon name="WAND" className="w-3 h-3" />
+                                                    {isWritten ? 'Regenerate' : 'Generate'}
+                                                </button>
+                                                <button
+                                                    onClick={() => setChapterGenPopover(null)}
+                                                    title="Cancel"
+                                                    className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 flex-shrink-0 text-xs"
+                                                >✕</button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </li>
                             );
                         })}

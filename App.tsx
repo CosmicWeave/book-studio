@@ -45,6 +45,7 @@ import ConflictResolutionModal from './components/ConflictResolutionModal';
 import StorageAlert from './components/StorageAlert';
 import InstallPrompt from './components/InstallPrompt';
 import PullToRefresh from './components/PullToRefresh';
+import AppStatusBar from './components/AppStatusBar';
 
 const App: React.FC = () => {
     return (
@@ -514,7 +515,7 @@ const MainApp: React.FC = () => {
                 
                 {/* Wrap main content area with PullToRefresh */}
                 <PullToRefresh onRefresh={handleRefresh} scrollRef={mainScrollRef} className={isOffline ? 'pt-6' : ''}>
-                    <main ref={mainScrollRef} className="flex-1 min-h-full">
+                    <main ref={mainScrollRef} className="flex-1 min-h-full pb-10">
                         <Routes>
                             <Route path="/" element={<Navigate to={`/${localStorage.getItem('start_page') || 'dashboard'}`} replace />} />
                             <Route path="/dashboard" element={<Dashboard />} />
@@ -539,6 +540,7 @@ const MainApp: React.FC = () => {
                     </main>
                 </PullToRefresh>
             </div>
+            <AppStatusBar isOffline={isOffline} />
             <ToastContainer />
             <ModalRenderer modalState={modalState} />
             <ConflictResolutionModal />

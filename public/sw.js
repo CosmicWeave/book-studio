@@ -1,12 +1,12 @@
 
 const CACHE_NAME = 'ai-book-studio-v1.5.0'; // Bumped version
 const ASSETS_TO_CACHE = [
-  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/',
-  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/index.html',
-  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/manifest.json',
-  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/icon.svg',
-  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/vendor/jspdf.umd.min.js',
-  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/vendor/html2canvas.min.js',
+  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/',
+  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/index.html',
+  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/manifest.json',
+  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/icon.svg',
+  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/vendor/jspdf.umd.min.js',
+  '/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/book-studio/vendor/html2canvas.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   'https://rsms.me/inter/inter.css',
   'https://cdn.tailwindcss.com',

@@ -29,7 +29,7 @@ const GoogleDriveRestoreModal: React.FC<GoogleDriveRestoreModalProps> = ({ isOpe
 
     return (
         <div 
-            className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 animate-fade-in"
+            className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[10001] p-4 animate-fade-in"
             onClick={onClose}
         >
             <div 
