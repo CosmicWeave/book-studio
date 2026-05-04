@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertModalOptions } from '../services/modalService';
+import { withModalPortal } from './ModalPortal';
 
 interface AlertModalProps extends AlertModalOptions {
   onClose: () => void;
@@ -21,4 +22,4 @@ const AlertModal: React.FC<AlertModalProps> = ({ title, message, closeText = 'OK
   );
 };
 
-export default AlertModal;
+export default withModalPortal(AlertModal);

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Book, EpubExportOptions } from '../types';
 import { ICONS } from '../constants';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface EpubExportModalProps {
     isOpen: boolean;
@@ -101,4 +102,4 @@ const EpubExportModal: React.FC<EpubExportModalProps> = ({ isOpen, onClose, onEx
     );
 };
 
-export default EpubExportModal;
+export default withModalPortal(EpubExportModal);

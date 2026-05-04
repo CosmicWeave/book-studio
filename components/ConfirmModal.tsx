@@ -1,5 +1,6 @@
 import React from 'react';
 import { ConfirmModalOptions } from '../services/modalService';
+import { withModalPortal } from './ModalPortal';
 
 interface ConfirmModalProps extends ConfirmModalOptions {
   onConfirm: () => void;
@@ -29,4 +30,4 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({ title, message, confirmText
   );
 };
 
-export default ConfirmModal;
+export default withModalPortal(ConfirmModal);

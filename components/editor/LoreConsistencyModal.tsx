@@ -2,6 +2,7 @@
 import React from 'react';
 import { LoreInconsistency } from '../../types';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 interface LoreConsistencyModalProps {
     isOpen: boolean;
@@ -88,4 +89,4 @@ const LoreConsistencyModal: React.FC<LoreConsistencyModalProps> = ({ isOpen, onC
     );
 };
 
-export default LoreConsistencyModal;
+export default withModalPortal(LoreConsistencyModal);

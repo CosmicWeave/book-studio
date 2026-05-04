@@ -22,7 +22,7 @@ function sanitizeBook(raw: Record<string, any>) {
     // explicitly discard unknown fields (e.g. imageStyle)
   } = raw;
 
-  return {
+  const full: Record<string, unknown> = {
     topic, subtitle, author, description, instructions,
     wordCountGoal, generateImages, imageGenerationInstructions,
     voiceStyleInstructions, aiPersona, status, deletedAt,
@@ -31,6 +31,8 @@ function sanitizeBook(raw: Record<string, any>) {
     creationConfig, knowledgeBase,
     bookChatHistory: bookChatHistory ?? chatHistory ?? undefined,
   };
+  // Strip undefined so Prisma's update only touches provided fields
+  return Object.fromEntries(Object.entries(full).filter(([, v]) => v !== undefined));
 }
 
 // GET all books
@@ -51,10 +53,21 @@ books.put('/:id', async (c) => {
   const body = await c.req.json();
   const id = c.req.param('id');
   const data = sanitizeBook(body);
+  const now = Date.now();
   const item = await prisma.book.upsert({
     where: { id },
     update: data,
-    create: { id, ...data },
+    create: {
+      // Defaults for required non-nullable fields (backup data should always
+      // provide these, but guard against legacy/partial payloads)
+      topic: '',
+      instructions: '',
+      imageGenerationInstructions: '',
+      createdAt: now,
+      updatedAt: now,
+      ...data,
+      id,
+    },
   });
   return c.json(serialize(item));
 });

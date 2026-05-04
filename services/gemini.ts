@@ -3,6 +3,7 @@
 // All actual AI calls are proxied through the backend server (/api/ai/*).
 import { Type, Content, FunctionDeclaration, FunctionCall } from '@google/genai';
 import { Book, ChapterOutline, GroundingChunk, AnalysisResult, KnowledgeSheet, Series, PacingAnalysisResult, ShowTellAnalysisResult, SeriesInconsistency, StyleSuggestion, CharacterVoiceInconsistency, PlotHole, LoreInconsistency } from '../types';
+import { db } from './apiClient';
 
 // ─── AI-enabled state ─────────────────────────────────────────────────────────
 // The server always provides AI (Ollama, Gemini, AnythingLLM). Default to true
@@ -25,22 +26,190 @@ export const checkServerAiStatus = async (): Promise<boolean> => {
 
 // ─── Server proxy helpers ─────────────────────────────────────────────────────
 
-type GenerateParams = { model?: string; contents: unknown; config?: Record<string, unknown> };
+export type RuntimeAiProvider = 'ollama' | 'gemini' | 'anythingllm' | 'openai';
+
+type GenerateParams = { provider?: RuntimeAiProvider; model?: string; contents: unknown; config?: Record<string, unknown> };
 type GeminiResponse = { text: string; candidates: { content: Content; finishReason: string }[]; audioData?: string };
 type StreamChunk = { text?: string; functionCalls?: { name: string; args: Record<string, unknown> }[] };
 
+const AI_RUNTIME_PROVIDER_KEY = 'aiRuntimeProvider';
+const AI_RUNTIME_MODEL_KEY = 'aiRuntimeModel';
+const AI_RUNTIME_SELECTION_SETTING_ID = 'aiRuntimeSelection';
+
+let cachedAiRuntimeSelection: { provider?: RuntimeAiProvider; model?: string } = {};
+let aiRuntimeSelectionLoaded = false;
+let aiRuntimeSelectionLoadPromise: Promise<void> | null = null;
+
+const sanitiseAiRuntimeSelection = (value: unknown): { provider?: RuntimeAiProvider; model?: string } => {
+    const raw = (value && typeof value === 'object' ? value : {}) as { provider?: string; model?: string };
+    const provider = raw.provider === 'ollama' || raw.provider === 'gemini' || raw.provider === 'anythingllm' || raw.provider === 'openai'
+        ? raw.provider
+        : undefined;
+    const model = typeof raw.model === 'string' && raw.model.trim().length > 0 ? raw.model.trim() : undefined;
+    return { provider, model };
+};
+
+const emitAiRuntimeSelectionChanged = () => {
+    window.dispatchEvent(new CustomEvent('ai-runtime-selection-changed', {
+        detail: {
+            provider: cachedAiRuntimeSelection.provider,
+            model: cachedAiRuntimeSelection.model,
+        },
+    }));
+};
+
+const ensureAiRuntimeSelectionLoaded = (): void => {
+    if (aiRuntimeSelectionLoaded || aiRuntimeSelectionLoadPromise) {
+        return;
+    }
+
+    aiRuntimeSelectionLoadPromise = (async () => {
+        try {
+            const setting = await db.settings.get(AI_RUNTIME_SELECTION_SETTING_ID);
+            if (setting) {
+                cachedAiRuntimeSelection = sanitiseAiRuntimeSelection(setting.value);
+            } else {
+                const providerRaw = localStorage.getItem(AI_RUNTIME_PROVIDER_KEY) || '';
+                const modelRaw = localStorage.getItem(AI_RUNTIME_MODEL_KEY) || '';
+                cachedAiRuntimeSelection = sanitiseAiRuntimeSelection({
+                    provider: providerRaw || undefined,
+                    model: modelRaw || undefined,
+                });
+                if (cachedAiRuntimeSelection.provider || cachedAiRuntimeSelection.model) {
+                    await db.settings.put({ id: AI_RUNTIME_SELECTION_SETTING_ID, value: cachedAiRuntimeSelection });
+                    localStorage.removeItem(AI_RUNTIME_PROVIDER_KEY);
+                    localStorage.removeItem(AI_RUNTIME_MODEL_KEY);
+                }
+            }
+        } catch (error) {
+            const providerRaw = localStorage.getItem(AI_RUNTIME_PROVIDER_KEY) || '';
+            const modelRaw = localStorage.getItem(AI_RUNTIME_MODEL_KEY) || '';
+            cachedAiRuntimeSelection = sanitiseAiRuntimeSelection({
+                provider: providerRaw || undefined,
+                model: modelRaw || undefined,
+            });
+            console.error('Failed to load AI runtime selection from db.settings', error);
+        } finally {
+            aiRuntimeSelectionLoaded = true;
+            aiRuntimeSelectionLoadPromise = null;
+            emitAiRuntimeSelectionChanged();
+        }
+    })();
+};
+
+export const getAiRuntimeSelection = (): { provider?: RuntimeAiProvider; model?: string } => {
+    ensureAiRuntimeSelectionLoaded();
+    return cachedAiRuntimeSelection;
+};
+
+export const setAiRuntimeSelection = (provider?: RuntimeAiProvider, model?: string): void => {
+    cachedAiRuntimeSelection = sanitiseAiRuntimeSelection({ provider, model });
+    aiRuntimeSelectionLoaded = true;
+    emitAiRuntimeSelectionChanged();
+    void db.settings.put({ id: AI_RUNTIME_SELECTION_SETTING_ID, value: cachedAiRuntimeSelection });
+    localStorage.removeItem(AI_RUNTIME_PROVIDER_KEY);
+    localStorage.removeItem(AI_RUNTIME_MODEL_KEY);
+};
+
+const applyRuntimeSelection = (params: GenerateParams): GenerateParams => {
+    const runtime = getAiRuntimeSelection();
+    const provider = runtime.provider ?? params.provider;
+
+    let model = params.model;
+    if (runtime.model) {
+        model = runtime.model;
+    } else if (runtime.provider && runtime.provider !== 'gemini' && params.model?.startsWith('gemini-')) {
+        // Avoid passing Gemini-specific model IDs when user switched providers.
+        model = undefined;
+    }
+
+    return {
+        ...params,
+        provider,
+        model,
+    };
+};
+
+/** Parse a raw AI error body into a friendly, readable message. */
+function parseAiError(body: Record<string, unknown>, httpStatus: number): string {
+    const err = (body as any)?.error;
+    if (!err) return body?.error as string ?? `AI error ${httpStatus}`;
+
+    const status: string = err.status ?? '';
+    const rawMessage: string = err.message ?? '';
+
+    // Quota / rate-limit
+    if (status === 'RESOURCE_EXHAUSTED' || httpStatus === 429) {
+        // Extract retry delay if present
+        const retryInfo = (err.details ?? []).find((d: any) => d['@type']?.includes('RetryInfo'));
+        const retryDelay: string = retryInfo?.retryDelay ?? '';
+        const retryMsg = retryDelay ? ` Please retry in ${retryDelay}.` : '';
+
+        // Summarise quota violations
+        const quotaFailure = (err.details ?? []).find((d: any) => d['@type']?.includes('QuotaFailure'));
+        const violations: string[] = (quotaFailure?.violations ?? []).map((v: any) => {
+            const metric: string = v.quotaMetric?.split('/').pop() ?? v.quotaMetric ?? '';
+            const model: string = v.quotaDimensions?.model ?? '';
+            return model ? `${metric} (${model})` : metric;
+        });
+        const uniqueViolations = [...new Set(violations)];
+        const violationMsg = uniqueViolations.length
+            ? ` Exceeded: ${uniqueViolations.join(', ')}.`
+            : '';
+
+        return `AI quota exceeded.${violationMsg}${retryMsg}`;
+    }
+
+    // Auth errors
+    if (status === 'UNAUTHENTICATED' || httpStatus === 401) {
+        return 'AI request failed: invalid or missing API key. Please check your settings.';
+    }
+    if (status === 'PERMISSION_DENIED' || httpStatus === 403) {
+        return 'AI request failed: permission denied. Check that your API key has access to this model.';
+    }
+
+    // Model not found
+    if (status === 'NOT_FOUND' || httpStatus === 404) {
+        return 'AI model not found. The configured model may not be available in your region or plan.';
+    }
+
+    // Return the raw message but keep it readable (strip JSON noise)
+    return rawMessage.split('\n')[0] || `AI error ${httpStatus}`;
+}
+
+/** Retry an async fn with exponential backoff on 429/503. */
+async function withRetry<T>(
+    fn: () => Promise<{ res: Response; body: T }>,
+    maxAttempts = 3,
+): Promise<{ res: Response; body: T }> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const { res, body } = await fn();
+        if (res.ok || (res.status !== 429 && res.status !== 503)) return { res, body };
+        if (attempt === maxAttempts) return { res, body };
+        // Try to honour Retry-After or retryDelay from response body
+        let delaySec = 2 ** attempt; // default: 2, 4, 8 …
+        const retryAfter = res.headers.get('Retry-After');
+        if (retryAfter) delaySec = Math.min(parseInt(retryAfter, 10) || delaySec, 60);
+        await new Promise(r => setTimeout(r, delaySec * 1000));
+    }
+    throw new Error('Unreachable');
+}
+
 async function serverGenerate(params: GenerateParams): Promise<GeminiResponse> {
     if (!navigator.onLine) throw new Error('You are currently offline. AI features require an internet connection.');
-    const res = await fetch('/api/ai/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
+    const { res, body } = await withRetry(async () => {
+        const r = await fetch('/api/ai/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params),
+        });
+        const b = await r.json().catch(() => ({ error: 'AI request failed' }));
+        return { res: r, body: b as Record<string, unknown> };
     });
     if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'AI request failed' }));
-        throw new Error((err as { error?: string }).error ?? `AI error ${res.status}`);
+        throw new Error(parseAiError(body as Record<string, unknown>, res.status));
     }
-    return res.json() as Promise<GeminiResponse>;
+    return body as unknown as GeminiResponse;
 }
 
 async function* serverStreamGen(params: GenerateParams): AsyncGenerator<StreamChunk> {
@@ -50,7 +219,10 @@ async function* serverStreamGen(params: GenerateParams): AsyncGenerator<StreamCh
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
     });
-    if (!res.ok) throw new Error(`AI stream failed: ${res.status}`);
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(parseAiError(body as Record<string, unknown>, res.status));
+    }
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -81,10 +253,10 @@ async function* serverStreamGen(params: GenerateParams): AsyncGenerator<StreamCh
 /** Mimics the Gemini Chat interface, but routes over the server proxy */
 class ServerChatProxy {
     private history: Content[];
-    private model: string;
+    private model: string | undefined;
     private config: Record<string, unknown> | undefined;
 
-    constructor(params: { model: string; history?: Content[]; config?: Record<string, unknown> }) {
+    constructor(params: { model?: string; history?: Content[]; config?: Record<string, unknown> }) {
         this.history = [...(params.history ?? [])];
         this.model = params.model;
         this.config = params.config;
@@ -133,12 +305,14 @@ class ServerChatProxy {
 
 const serverProxy = {
     models: {
-        generateContent: (params: GenerateParams) => serverGenerate(params),
-        generateContentStream: (params: GenerateParams) => serverStreamGen(params),
+        generateContent: (params: GenerateParams) => serverGenerate(applyRuntimeSelection(params)),
+        generateContentStream: (params: GenerateParams) => serverStreamGen(applyRuntimeSelection(params)),
     },
     chats: {
-        create: (params: { model: string; history?: Content[]; config?: Record<string, unknown> }) =>
-            new ServerChatProxy(params),
+        create: (params: { model?: string; history?: Content[]; config?: Record<string, unknown> }) => {
+            const runtime = applyRuntimeSelection({ model: params.model, contents: [] });
+            return new ServerChatProxy({ model: runtime.model, history: params.history, config: params.config });
+        },
     },
 };
 

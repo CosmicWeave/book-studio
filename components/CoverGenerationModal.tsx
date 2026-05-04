@@ -5,6 +5,7 @@ import { generateCoverImage, editCoverImage } from '../services/gemini';
 import Loader from './Loader';
 import Icon from './Icon';
 import { toastService } from '../services/toastService';
+import { withModalPortal } from './ModalPortal';
 
 interface CoverGenerationModalProps {
     book: Book;
@@ -306,4 +307,4 @@ const CoverGenerationModal: React.FC<CoverGenerationModalProps> = ({ book, allBo
     );
 };
 
-export default CoverGenerationModal;
+export default withModalPortal(CoverGenerationModal);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PromptModalOptions } from '../services/modalService';
+import { withModalPortal } from './ModalPortal';
 
 interface PromptModalProps extends PromptModalOptions {
   onConfirm: (value: string) => void;
@@ -62,4 +63,4 @@ const PromptModal: React.FC<PromptModalProps> = ({ title, message, inputLabel, i
   );
 };
 
-export default PromptModal;
+export default withModalPortal(PromptModal);

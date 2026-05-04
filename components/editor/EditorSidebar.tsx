@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { useBookEditor } from '../../contexts/BookEditorContext';
 import ConfigurationPanel from './panels/ConfigurationPanel';
 import MetadataPanel from './panels/MetadataPanel';
@@ -20,6 +20,8 @@ interface EditorSidebarProps {
     onSaveAndClose: () => void;
 }
 
+type SidebarTab = 'write' | 'research' | 'ai-tools' | 'media' | 'settings';
+
 const EditorSidebar: React.FC<EditorSidebarProps> = ({ onSaveAndClose }) => {
     const { 
         book, 
@@ -32,37 +34,54 @@ const EditorSidebar: React.FC<EditorSidebarProps> = ({ onSaveAndClose }) => {
         handleAnalyzeLoreConsistency,
         isAnalyzingLore
     } = useBookEditor();
+    const [activeTab, setActiveTab] = useState<SidebarTab>('write');
 
     if (!book) return null;
 
     const hasOutline = book.outline.length > 0;
 
-    return (
-        <div className="flex flex-col gap-5 pb-10">
-            {!hasOutline && <ConfigurationPanel />}
-            {hasOutline && (
-                <>
-                    <div className="space-y-4 mb-6">
+    const tabs = useMemo(
+        () => [
+            { id: 'write' as const, label: 'Write', icon: 'EDIT' as const },
+            { id: 'research' as const, label: 'Research', icon: 'BRAIN' as const },
+            { id: 'ai-tools' as const, label: 'AI Tools', icon: 'SPARKLES' as const },
+            { id: 'media' as const, label: 'Media', icon: 'IMAGE' as const },
+            { id: 'settings' as const, label: 'Settings', icon: 'SETTINGS' as const },
+        ],
+        [],
+    );
+
+    const renderTabContent = () => {
+        if (!hasOutline) {
+            return <ConfigurationPanel />;
+        }
+
+        switch (activeTab) {
+            case 'write':
+                return (
+                    <>
                         <SaveStatusIndicator status={saveStatus} />
                         <ActionsPanel onSaveAndClose={onSaveAndClose} />
-                    </div>
-                    
-                    {/* Secondary Tools Section */}
-                    <div className="space-y-4">
-                        <div className="flex items-center space-x-2 px-1 pb-2 border-b border-zinc-200 dark:border-zinc-700/50">
-                            <Icon name="COMMAND" className="w-4 h-4 text-zinc-400" />
-                            <h3 className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Project Tools</h3>
-                        </div>
-                        
-                        <div className="grid gap-4">
-                            {isAiEnabled && <AIAssistantPanel />}
-                            
-                            <FindReplacePanel />
-                            
-                            {isAiEnabled && (
-                                <>
+                        <FindReplacePanel />
+                        {isAiEnabled && <GenerationConfigPanel />}
+                    </>
+                );
+            case 'research':
+                return (
+                    <>
+                        <KnowledgeBasePanel />
+                        {isAiEnabled && <ResearchPanel />}
+                    </>
+                );
+            case 'ai-tools':
+                return (
+                    <>
+                        {isAiEnabled && <AIAssistantPanel />}
+
+                        {isAiEnabled && (
+                            <>
                                 <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 overflow-hidden transition-all duration-200 hover:shadow-md hover:border-indigo-200 dark:hover:border-indigo-900/50">
-                                    <button 
+                                    <button
                                         onClick={handleAnalyzeCharacterVoice}
                                         disabled={isAnalyzingCharacterVoice}
                                         className="w-full flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-zinc-700/30 transition-colors group disabled:opacity-50"
@@ -80,7 +99,7 @@ const EditorSidebar: React.FC<EditorSidebarProps> = ({ onSaveAndClose }) => {
                                 </div>
 
                                 <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 overflow-hidden transition-all duration-200 hover:shadow-md hover:border-amber-200 dark:hover:border-amber-900/50">
-                                    <button 
+                                    <button
                                         onClick={handleAnalyzePlotHoles}
                                         disabled={isAnalyzingPlotHoles}
                                         className="w-full flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-zinc-700/30 transition-colors group disabled:opacity-50"
@@ -98,7 +117,7 @@ const EditorSidebar: React.FC<EditorSidebarProps> = ({ onSaveAndClose }) => {
                                 </div>
 
                                 <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700 overflow-hidden transition-all duration-200 hover:shadow-md hover:border-teal-200 dark:hover:border-teal-900/50">
-                                    <button 
+                                    <button
                                         onClick={handleAnalyzeLoreConsistency}
                                         disabled={isAnalyzingLore}
                                         className="w-full flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-zinc-700/30 transition-colors group disabled:opacity-50"
@@ -114,21 +133,55 @@ const EditorSidebar: React.FC<EditorSidebarProps> = ({ onSaveAndClose }) => {
                                         <Icon name="CHEVRON_RIGHT" className="w-4 h-4 text-zinc-400 group-hover:text-teal-500 transition-colors" />
                                     </button>
                                 </div>
-                                </>
-                            )}
 
-                            {isAiEnabled && <ImageSuggestionsPanel />}
-                            <MetadataPanel />
-                            {book.seriesId && <SeriesPanel />}
-                            <KnowledgeBasePanel />
-                            {isAiEnabled && <GenerationConfigPanel />}
-                            {isAiEnabled && <ResearchPanel />}
-                            {isAiEnabled && <MacrosPanel />}
-                            {isAiEnabled && <AudiobookPanel />}
-                        </div>
-                    </div>
-                </>
+                                <ImageSuggestionsPanel />
+                                <MacrosPanel />
+                            </>
+                        )}
+                    </>
+                );
+            case 'media':
+                return (
+                    <>
+                        {isAiEnabled && <AudiobookPanel />}
+                        <ImageSuggestionsPanel />
+                    </>
+                );
+            case 'settings':
+                return (
+                    <>
+                        <MetadataPanel />
+                        {book.seriesId && <SeriesPanel />}
+                    </>
+                );
+            default:
+                return null;
+        }
+    };
+
+    return (
+        <div className="flex flex-col gap-5 pb-10">
+            {hasOutline && (
+                <div className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-white/80 p-1 dark:border-zinc-700 dark:bg-zinc-800/60">
+                    {tabs.map((tab) => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-2 text-xs font-semibold transition-colors ${
+                                activeTab === tab.id
+                                    ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300'
+                                    : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700/60'
+                            }`}
+                            title={tab.label}
+                        >
+                            <Icon name={tab.icon} className="h-3.5 w-3.5" />
+                            <span className="hidden xl:inline">{tab.label}</span>
+                        </button>
+                    ))}
+                </div>
             )}
+
+            <div className="grid gap-4">{renderTabContent()}</div>
         </div>
     );
 };

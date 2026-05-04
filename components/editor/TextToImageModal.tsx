@@ -6,6 +6,7 @@ import Icon from '../Icon';
 import { generateIllustration, editImage } from '../../services/gemini';
 import { toastService } from '../../services/toastService';
 import Loader from '../Loader';
+import { withModalPortal } from '../ModalPortal';
 
 const TextToImageModal: React.FC = () => {
     const { 
@@ -198,4 +199,4 @@ const TextToImageModal: React.FC = () => {
     );
 };
 
-export default TextToImageModal;
+export default withModalPortal(TextToImageModal);

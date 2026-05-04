@@ -7,6 +7,7 @@ import * as gemini from '../../services/gemini';
 import { toastService } from '../../services/toastService';
 import VoicePromptHelpModal from '../VoicePromptHelpModal';
 import { audiobookGenerator } from '../../services/audiobookGenerator';
+import { withModalPortal } from '../ModalPortal';
 
 // --- Audio Helper Functions for Preview (still needed locally) ---
 function decode(base64: string) {
@@ -331,4 +332,4 @@ const AudiobookDownloadModal: React.FC = () => {
     );
 };
 
-export default AudiobookDownloadModal;
+export default withModalPortal(AudiobookDownloadModal);

@@ -2,9 +2,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Book, ChapterOutline } from '../../types';
 import { ICONS, FRAMEWORKS } from '../../constants';
-import { generateBookAngles, generateBookParts, generateDetailedOutline, synthesizeBookAngles, synthesizeBookParts } from '../../services/gemini';
+import {
+    RuntimeAiProvider,
+    generateBookAngles,
+    generateBookParts,
+    generateDetailedOutline,
+    getAiRuntimeSelection,
+    setAiRuntimeSelection,
+    synthesizeBookAngles,
+    synthesizeBookParts
+} from '../../services/gemini';
 import Icon from '../Icon';
 import { toastService } from '../../services/toastService';
+import { withModalPortal } from '../ModalPortal';
 
 interface BrainstormModalProps {
     isOpen: boolean;
@@ -31,6 +41,8 @@ const BrainstormModal: React.FC<BrainstormModalProps> = ({ isOpen, onClose, book
     const [isLoading, setIsLoading] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState('');
     const [error, setError] = useState('');
+    const [runtimeProvider, setRuntimeProvider] = useState<RuntimeAiProvider | 'default'>('default');
+    const [runtimeModel, setRuntimeModel] = useState('');
 
     const resetState = useCallback(() => {
         setStep('framework');
@@ -229,6 +241,21 @@ const BrainstormModal: React.FC<BrainstormModalProps> = ({ isOpen, onClose, book
             resetState();
         }
     }, [isOpen, resetState]);
+
+    useEffect(() => {
+        const current = getAiRuntimeSelection();
+        setRuntimeProvider(current.provider ?? 'default');
+        setRuntimeModel(current.model ?? '');
+
+        const onRuntimeChange = (e: Event) => {
+            const detail = (e as CustomEvent<{ provider?: RuntimeAiProvider; model?: string }>).detail;
+            setRuntimeProvider(detail?.provider ?? 'default');
+            setRuntimeModel(detail?.model ?? '');
+        };
+
+        window.addEventListener('ai-runtime-selection-changed', onRuntimeChange);
+        return () => window.removeEventListener('ai-runtime-selection-changed', onRuntimeChange);
+    }, []);
     
     useEffect(() => {
         if (step === 'parts' && selectedAngle && parts.length === 0) {
@@ -346,6 +373,13 @@ const BrainstormModal: React.FC<BrainstormModalProps> = ({ isOpen, onClose, book
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const applyRuntimeSelection = () => {
+        setAiRuntimeSelection(runtimeProvider === 'default' ? undefined : runtimeProvider, runtimeModel.trim() || undefined);
+        toastService.success(runtimeProvider === 'default'
+            ? 'AI provider reset to Settings default.'
+            : `AI provider set to ${runtimeProvider}${runtimeModel.trim() ? ` (${runtimeModel.trim()})` : ''}.`);
     };
 
     const renderLoading = () => (
@@ -599,6 +633,39 @@ const BrainstormModal: React.FC<BrainstormModalProps> = ({ isOpen, onClose, book
                     </button>
                 </div>
                 <div className="overflow-y-auto pr-2 -mr-2">
+                    <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-2">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">AI Provider (Runtime)</div>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                            <select
+                                value={runtimeProvider}
+                                onChange={(e) => setRuntimeProvider(e.target.value as RuntimeAiProvider | 'default')}
+                                className="w-full rounded-md border border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm px-2 py-1.5"
+                                aria-label="Runtime AI provider"
+                            >
+                                <option value="default">Use Settings Default</option>
+                                <option value="gemini">Gemini</option>
+                                <option value="ollama">Ollama</option>
+                                <option value="anythingllm">AnythingLLM</option>
+                                <option value="openai">OpenAI</option>
+                            </select>
+                            <input
+                                type="text"
+                                value={runtimeModel}
+                                onChange={(e) => setRuntimeModel(e.target.value)}
+                                placeholder="Optional model override"
+                                className="w-full rounded-md border border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm px-2 py-1.5"
+                                aria-label="Runtime model override"
+                            />
+                            <button
+                                type="button"
+                                onClick={applyRuntimeSelection}
+                                className="rounded-md bg-indigo-600 text-white text-sm font-semibold px-3 py-1.5 hover:bg-indigo-700"
+                            >
+                                Apply
+                            </button>
+                        </div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">This runtime selection applies across AI actions in the editor.</p>
+                    </div>
                     {renderContent()}
                 </div>
             </div>
@@ -606,4 +673,4 @@ const BrainstormModal: React.FC<BrainstormModalProps> = ({ isOpen, onClose, book
     );
 };
 
-export default BrainstormModal;
+export default withModalPortal(BrainstormModal);

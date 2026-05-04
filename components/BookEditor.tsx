@@ -30,6 +30,7 @@ import AudiobookDownloadModal from '../components/editor/AudiobookDownloadModal'
 import TextToImageModal from '../components/editor/TextToImageModal';
 import CharacterVoiceAnalysisModal from '../components/editor/CharacterVoiceAnalysisModal';
 import PlotHoleAnalysisModal from '../components/editor/PlotHoleAnalysisModal';
+import ChapterRail from '../components/editor/ChapterRail';
 
 interface BookEditorProps {
   onSave: () => void;
@@ -84,6 +85,8 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
         setIsSnapshotsPanelOpen,
         handleGenerateChapters,
         handleGenerateFullBook,
+        handleStopGenerateFullBook,
+        isGeneratingRemainingBook,
         activeChapterIndex,
         handleOpenAnalysisModal,
         handleAnalyzeChapterStyle,
@@ -122,6 +125,7 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
     const [isHeaderVisible, setIsHeaderVisible] = useState(true);
     const lastScrollTop = useRef(0);
     const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
+    const [showSavedPill, setShowSavedPill] = useState(false);
 
     // View Settings State with Persistence
     const [viewSettings, setViewSettings] = useState<ViewSettings>(() => {
@@ -262,6 +266,36 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
       }
       return () => window.removeEventListener('click', closeMenu);
   }, [isViewMenuOpen]);
+
+  useEffect(() => {
+      if (saveStatus === 'saved') {
+          setShowSavedPill(true);
+          const timer = window.setTimeout(() => setShowSavedPill(false), 2000);
+          return () => window.clearTimeout(timer);
+      }
+      setShowSavedPill(false);
+  }, [saveStatus]);
+
+  const handleChapterJump = useCallback((index: number) => {
+      const element = document.getElementById(`chapter-${index}`);
+      if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          setActiveChapterIndex(index);
+      }
+  }, [setActiveChapterIndex]);
+
+  const shouldShowSavePill = saveStatus !== 'saved' || showSavedPill;
+
+  const savePillState =
+      saveStatus === 'saving'
+          ? { icon: 'ROTATE_CW' as const, label: 'Saving...', className: 'text-indigo-600 dark:text-indigo-300', iconClass: 'animate-spin' }
+          : saveStatus === 'unsaved'
+              ? { icon: 'EDIT' as const, label: 'Unsaved changes', className: 'text-amber-600 dark:text-amber-300', iconClass: '' }
+              : { icon: 'CLOUD_CHECK' as const, label: 'Saved', className: 'text-emerald-600 dark:text-emerald-300', iconClass: '' };
+
+  const remainingGenerationLabel = isGeneratingChapter !== null
+      ? `Auto-generating chapter ${isGeneratingChapter + 1} of ${book?.outline.length ?? 0}`
+      : 'Auto-generating remaining chapters';
 
   if (!book) return (
     <div className="text-center py-10">Loading editor...</div>
@@ -404,6 +438,18 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
                   )}
 
                   <div className="flex items-center space-x-2 flex-shrink-0 ml-4">
+                    {isGeneratingRemainingBook && (
+                        <div className="hidden md:flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 dark:border-indigo-800 dark:bg-indigo-900/30">
+                            <Icon name="ROTATE_CW" className="w-4 h-4 animate-spin text-indigo-600 dark:text-indigo-300" />
+                            <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 whitespace-nowrap">{remainingGenerationLabel}</span>
+                            <button
+                                onClick={handleStopGenerateFullBook}
+                                className="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60"
+                            >
+                                Stop
+                            </button>
+                        </div>
+                    )}
                     
                     {/* View Options Dropdown */}
                     <div className="relative">
@@ -514,7 +560,21 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
                     <div className="space-y-6">
                         {book.outline.length > 0 ? (
                             <>
-                                {activeView === 'editor' && <EditorContent viewSettings={viewSettings} />}
+                                {activeView === 'editor' && (
+                                    <div className="flex items-start gap-4">
+                                        {!viewSettings.focusMode && (
+                                            <ChapterRail
+                                                outline={book.outline}
+                                                content={book.content}
+                                                activeChapterIndex={activeChapterIndex}
+                                                onJumpToChapter={handleChapterJump}
+                                            />
+                                        )}
+                                        <div className="min-w-0 flex-1">
+                                            <EditorContent viewSettings={viewSettings} />
+                                        </div>
+                                    </div>
+                                )}
                                 {activeView === 'corkboard' && <CorkboardView />}
                                 {activeView === 'outliner' && <OutlinerView />}
                             </>
@@ -524,6 +584,15 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
                     </div>
                 </div>
             </main>
+
+            {shouldShowSavePill && (
+                <div className="pointer-events-none fixed bottom-20 left-1/2 z-40 -translate-x-1/2">
+                    <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-4 py-2 text-sm font-semibold shadow-lg backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-800/95">
+                        <Icon name={savePillState.icon} className={`h-4 w-4 ${savePillState.className} ${savePillState.iconClass}`} />
+                        <span className={savePillState.className}>{savePillState.label}</span>
+                    </div>
+                </div>
+            )}
         </div>
         <EditorFooter />
       </div>

@@ -5,6 +5,7 @@ import { KnowledgeSheet, KnowledgeSheetCategory } from '../../types';
 import { ICONS, KNOWLEDGE_SHEET_CATEGORIES, VALUE_SYSTEM_TEMPLATE, TECHNOLOGY_MAGIC_TEMPLATE, CULTURE_SOCIETY_TEMPLATE, HISTORY_TIMELINE_TEMPLATE, PLOT_NARRATIVE_TEMPLATE, THEME_TONE_TEMPLATE } from '../../constants';
 import KnowledgeGraph from './KnowledgeGraph';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 interface KnowledgeBaseModalProps {
     isOpen: boolean;
@@ -164,4 +165,4 @@ const KnowledgeBaseModal: React.FC<KnowledgeBaseModalProps> = ({ isOpen, onClose
     );
 };
 
-export default KnowledgeBaseModal;
+export default withModalPortal(KnowledgeBaseModal);

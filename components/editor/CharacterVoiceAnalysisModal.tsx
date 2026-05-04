@@ -4,6 +4,7 @@ import { CharacterVoiceInconsistency } from '../../types';
 import { ICONS } from '../../constants';
 import Icon from '../Icon';
 import Loader from '../Loader';
+import { withModalPortal } from '../ModalPortal';
 
 interface CharacterVoiceAnalysisModalProps {
     isOpen: boolean;
@@ -91,4 +92,4 @@ const CharacterVoiceAnalysisModal: React.FC<CharacterVoiceAnalysisModalProps> = 
     );
 };
 
-export default CharacterVoiceAnalysisModal;
+export default withModalPortal(CharacterVoiceAnalysisModal);

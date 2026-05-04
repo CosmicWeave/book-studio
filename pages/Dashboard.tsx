@@ -31,7 +31,7 @@ const StatCard: React.FC<{ label: string; value: number; icon: IconName; colorCl
 type SortOption = 'updated' | 'created' | 'alpha';
 
 const Dashboard: React.FC = () => {
-    const { books, series: allSeries, deleteBook, archiveBook, updateBook, removeBookFromSeries, reorderBooksInSeries } = useContext(AppContext);
+    const { books, booksLoaded, series: allSeries, deleteBook, archiveBook, updateBook, removeBookFromSeries, reorderBooksInSeries } = useContext(AppContext);
     const navigate = useNavigate();
     const [isLoading, setIsLoading] = useState(false);
     
@@ -394,7 +394,20 @@ const Dashboard: React.FC = () => {
                 </div>
 
                 {/* Content Grid */}
-                {filteredBooks.length === 0 && searchQuery ? (
+                {!booksLoaded ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {Array.from({ length: 8 }).map((_, i) => (
+                            <div key={i} className="bg-white dark:bg-zinc-800 rounded-2xl border border-zinc-200 dark:border-zinc-700 shadow-sm overflow-hidden animate-pulse">
+                                <div className="bg-zinc-200 dark:bg-zinc-700 h-48 w-full" />
+                                <div className="p-4 space-y-3">
+                                    <div className="h-4 bg-zinc-200 dark:bg-zinc-700 rounded w-3/4" />
+                                    <div className="h-3 bg-zinc-200 dark:bg-zinc-700 rounded w-1/2" />
+                                    <div className="h-3 bg-zinc-200 dark:bg-zinc-700 rounded w-1/3" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : filteredBooks.length === 0 && searchQuery ? (
                     <div className="text-center py-20">
                         <Icon name="SEARCH" className="w-12 h-12 mx-auto text-zinc-300 dark:text-zinc-600 mb-4" />
                         <p className="text-zinc-500 dark:text-zinc-400">No books found matching "{searchQuery}"</p>

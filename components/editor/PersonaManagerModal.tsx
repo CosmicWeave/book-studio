@@ -4,6 +4,7 @@ import { useBookEditor } from '../../contexts/BookEditorContext';
 import { ICONS } from '../../constants';
 import Icon from '../Icon';
 import { toastService } from '../../services/toastService';
+import { withModalPortal } from '../ModalPortal';
 
 interface PersonaManagerModalProps {
     isOpen: boolean;
@@ -142,4 +143,4 @@ const PersonaManagerModal: React.FC<PersonaManagerModalProps> = ({ isOpen, onClo
     );
 };
 
-export default PersonaManagerModal;
+export default withModalPortal(PersonaManagerModal);

@@ -5,6 +5,7 @@ import { ICONS } from '../constants';
 import { modalService } from '../services/modalService';
 import { toastService } from '../services/toastService';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface SnapshotHistoryModalProps {
     book: Book;
@@ -124,4 +125,4 @@ const SnapshotHistoryModal: React.FC<SnapshotHistoryModalProps> = ({ book, onClo
     );
 };
 
-export default SnapshotHistoryModal;
+export default withModalPortal(SnapshotHistoryModal);

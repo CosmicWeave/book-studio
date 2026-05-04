@@ -43,7 +43,7 @@ class ObjectStore<T> implements Store<T> {
         return new Promise((resolve, reject) => {
             const request = this.transaction('readwrite').put(item);
             request.onsuccess = () => {
-                window.dispatchEvent(new Event('dbversionchange'));
+                window.dispatchEvent(new Event('dbdatachange'));
                 resolve();
             };
             request.onerror = () => reject(request.error);
@@ -121,7 +121,7 @@ class InMemoryStore<T> implements Store<T> {
         if (key) {
             this.cache.set(String(key), item);
             this.save();
-            window.dispatchEvent(new Event('dbversionchange'));
+            window.dispatchEvent(new Event('dbdatachange'));
         }
     }
 

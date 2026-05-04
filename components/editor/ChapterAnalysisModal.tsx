@@ -3,6 +3,7 @@ import { AnalysisResult } from '../../types';
 import { ICONS } from '../../constants';
 import Loader from '../Loader';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 interface ChapterAnalysisModalProps {
     isOpen: boolean;
@@ -72,4 +73,4 @@ const ChapterAnalysisModal: React.FC<ChapterAnalysisModalProps> = ({ isOpen, onC
     );
 };
 
-export default ChapterAnalysisModal;
+export default withModalPortal(ChapterAnalysisModal);

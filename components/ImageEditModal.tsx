@@ -3,6 +3,7 @@ import { ICONS } from '../constants';
 import Loader from './Loader';
 import { toastService } from '../services/toastService';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface ImageEditModalProps {
   isOpen: boolean;
@@ -91,4 +92,4 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({
     );
 };
 
-export default ImageEditModal;
+export default withModalPortal(ImageEditModal);

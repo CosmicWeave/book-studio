@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Book } from '../types';
 import Icon from './Icon';
 import { READER_CONTENT_SELECTORS } from '../pages/Reader';
+import { withModalPortal } from './ModalPortal';
 
 export interface SearchResult {
     chapterIndex: number;
@@ -208,4 +209,4 @@ const ReaderSearchModal: React.FC<ReaderSearchModalProps> = ({ isOpen, onClose, 
     );
 };
 
-export default ReaderSearchModal;
+export default withModalPortal(ReaderSearchModal);

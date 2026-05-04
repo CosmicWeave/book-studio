@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ICONS } from '../../constants';
 import { useBookEditor } from '../../contexts/BookEditorContext';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 const ImageSuggestionModal: React.FC = () => {
     const {
@@ -78,4 +79,4 @@ const ImageSuggestionModal: React.FC = () => {
     );
 };
 
-export default ImageSuggestionModal;
+export default withModalPortal(ImageSuggestionModal);

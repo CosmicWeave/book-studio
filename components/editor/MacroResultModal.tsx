@@ -2,6 +2,7 @@ import React from 'react';
 import { MacroResult, PacingAnalysisResult, ShowTellAnalysisResult, SeriesInconsistency } from '../../types';
 import { ICONS } from '../../constants';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 type MacroResultModalProps = {
     isOpen: boolean;
@@ -135,4 +136,4 @@ const MacroResultModal: React.FC<MacroResultModalProps> = ({ isOpen, onClose, re
     );
 };
 
-export default MacroResultModal;
+export default withModalPortal(MacroResultModal);

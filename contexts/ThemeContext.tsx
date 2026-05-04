@@ -1,6 +1,8 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useMemo } from 'react';
+import { db } from '../services/apiClient';
 
 type Theme = 'light' | 'dark';
+const THEME_SETTING_ID = 'theme';
 
 interface ThemeContextType {
   theme: Theme;
@@ -20,6 +22,40 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
         return 'light';
     });
+    const [themeLoaded, setThemeLoaded] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadTheme = async () => {
+            try {
+                const setting = await db.settings.get(THEME_SETTING_ID);
+                if (cancelled) return;
+                if (setting?.value === 'light' || setting?.value === 'dark') {
+                    setTheme(setting.value);
+                } else {
+                    const legacyTheme = localStorage.getItem('theme') as Theme | null;
+                    if (legacyTheme === 'light' || legacyTheme === 'dark') {
+                        setTheme(legacyTheme);
+                        await db.settings.put({ id: THEME_SETTING_ID, value: legacyTheme });
+                        localStorage.removeItem('theme');
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load theme from db.settings', error);
+            } finally {
+                if (!cancelled) {
+                    setThemeLoaded(true);
+                }
+            }
+        };
+
+        void loadTheme();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     useEffect(() => {
         const root = window.document.documentElement;
@@ -28,8 +64,11 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         } else {
             root.classList.remove('dark');
         }
-        localStorage.setItem('theme', theme);
-    }, [theme]);
+        if (themeLoaded) {
+            void db.settings.put({ id: THEME_SETTING_ID, value: theme });
+            localStorage.removeItem('theme');
+        }
+    }, [theme, themeLoaded]);
 
     const toggleTheme = useCallback(() => {
         setTheme(prevTheme => (prevTheme === 'light' ? 'dark' : 'light'));

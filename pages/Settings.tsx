@@ -18,7 +18,7 @@ import {
     disconnectDrive,
     DriveInitState
 } from '../services/googleDrive';
-import { getCredentials } from '../services/googleDriveConfig';
+import { getCredentials, initGoogleDriveConfig } from '../services/googleDriveConfig';
 import { GoogleDriveFile, SyncProvider } from '../types';
 import GoogleDriveRestoreModal from '../components/GoogleDriveRestoreModal';
 import { AUTO_BACKUP_ENABLED_ID, LOW_DATA_MODE_ID, BACKUP_API_KEY_ID, manualTriggerBackup, listServerBackups, fetchBackupContent, fetchLatestBackup, getNetworkStats, createCloudSnapshot } from '../services/backupService';
@@ -38,7 +38,9 @@ interface SettingsProps {
 }
 
 type SettingsTab = 'general' | 'data' | 'cloud' | 'shortcuts' | 'system';
-type AiProvider = 'ollama' | 'gemini' | 'anythingllm';
+type AiProvider = 'ollama' | 'gemini' | 'anythingllm' | 'openai';
+type ProviderModels = Record<AiProvider, string>;
+const START_PAGE_SETTING_ID = 'startPage';
 
 const MigrateButton: React.FC = () => {
     const [status, setStatus] = useState('');
@@ -89,16 +91,25 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
     const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
     const [networkStats, setNetworkStats] = useState({ total: 0, session: 0 });
     const [isPersisted, setIsPersisted] = useState(false);
-    const [startPage, setStartPage] = useState(localStorage.getItem('start_page') || 'dashboard');
+    const [startPage, setStartPage] = useState('dashboard');
     const [selectedProvider, setSelectedProvider] = useState<SyncProvider>('google_drive');
     const [aiProvider, setAiProvider] = useState<AiProvider>('ollama');
-    const [aiModel, setAiModel] = useState('');
+    const [providerModels, setProviderModels] = useState<ProviderModels>({
+        ollama: '',
+        gemini: '',
+        anythingllm: '',
+        openai: '',
+    });
     const [ollamaUrl, setOllamaUrl] = useState('http://host.docker.internal:11434');
     const [anythingllmUrl, setAnythingllmUrl] = useState('http://host.docker.internal:3001');
-    const [geminiApiKey, setGeminiApiKey] = useState('');
+    const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.openai.com');
+    const [geminiApiKeys, setGeminiApiKeys] = useState<Array<{ masked: string; exhaustedUntil?: number; isExhausted?: boolean }>>([]);
+    const [newGeminiKeys, setNewGeminiKeys] = useState<Array<{ value: string; visible: boolean }>>([{ value: '', visible: false }]);
     const [anythingllmApiKey, setAnythingllmApiKey] = useState('');
+    const [openaiApiKey, setOpenaiApiKey] = useState('');
     const [hasGeminiKey, setHasGeminiKey] = useState(false);
     const [hasAnythingllmKey, setHasAnythingllmKey] = useState(false);
+    const [hasOpenaiKey, setHasOpenaiKey] = useState(false);
     const [aiAvailable, setAiAvailable] = useState(false);
     const [activeAiProvider, setActiveAiProvider] = useState('none');
     
@@ -128,6 +139,7 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
         });
         
         const fetchSettings = async () => {
+            await initGoogleDriveConfig();
             const setting = await db.settings.get(AUTO_BACKUP_ENABLED_ID);
             setAutoBackupEnabled(setting?.value !== false);
             
@@ -140,6 +152,16 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
             const providerSetting = await db.settings.get('syncProvider');
             if (providerSetting) {
                 setSelectedProvider(providerSetting.value);
+            }
+
+            const startPageSetting = await db.settings.get(START_PAGE_SETTING_ID);
+            if (typeof startPageSetting?.value === 'string' && startPageSetting.value.length > 0) {
+                setStartPage(startPageSetting.value);
+            } else {
+                const legacyStartPage = localStorage.getItem('start_page') || 'dashboard';
+                setStartPage(legacyStartPage);
+                await db.settings.put({ id: START_PAGE_SETTING_ID, value: legacyStartPage });
+                localStorage.removeItem('start_page');
             }
             
             // Pre-fill if already stored in localStorage (via getCredentials)
@@ -156,11 +178,21 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                 if (configRes.ok) {
                     const cfg = await configRes.json();
                     setAiProvider((cfg.provider || 'ollama') as AiProvider);
-                    setAiModel(cfg.model || '');
+                    const configuredProvider = (cfg.provider || 'ollama') as AiProvider;
+                    const legacyModel = cfg.model || '';
+                    setProviderModels({
+                        ollama: cfg.ollamaModel || (configuredProvider === 'ollama' ? legacyModel : ''),
+                        gemini: cfg.geminiModel || (configuredProvider === 'gemini' ? legacyModel : ''),
+                        anythingllm: cfg.anythingllmModel || (configuredProvider === 'anythingllm' ? legacyModel : ''),
+                        openai: cfg.openaiModel || (configuredProvider === 'openai' ? legacyModel : ''),
+                    });
                     setOllamaUrl(cfg.ollamaUrl || 'http://host.docker.internal:11434');
                     setAnythingllmUrl(cfg.anythingllmUrl || 'http://host.docker.internal:3001');
+                    setOpenaiBaseUrl(cfg.openaiBaseUrl || 'https://api.openai.com');
+                    setGeminiApiKeys(cfg.geminiApiKeys || []);
                     setHasGeminiKey(!!cfg.hasGeminiKey);
                     setHasAnythingllmKey(!!cfg.hasAnythingllmKey);
+                    setHasOpenaiKey(!!cfg.hasOpenaiKey);
                 }
 
                 if (healthRes.ok) {
@@ -238,10 +270,12 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
         toastService.success(`Sync provider changed to ${provider.replace('_', ' ')}`);
     };
 
-    const handleStartPageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const handleStartPageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
         const newVal = e.target.value;
         setStartPage(newVal);
-        localStorage.setItem('start_page', newVal);
+        await db.settings.put({ id: START_PAGE_SETTING_ID, value: newVal });
+        localStorage.removeItem('start_page');
+        window.dispatchEvent(new CustomEvent('app-start-page-changed', { detail: { startPage: newVal } }));
         toastService.success('Start page preference updated.');
     };
 
@@ -323,10 +357,12 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
     };
 
     const handleDisconnectDrive = () => {
-        disconnectDrive();
-        setCustomClientId('');
-        setCustomApiKey('');
-        toastService.info("Google Drive credentials removed.");
+        void (async () => {
+            await disconnectDrive();
+            setCustomClientId('');
+            setCustomApiKey('');
+            toastService.info("Google Drive credentials removed.");
+        })();
     };
 
     const handleGoogleDriveBackup = async () => {
@@ -449,7 +485,8 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
         setIsLoading(true);
         setLoadingMessage('Restoring from server...');
         try {
-            const content = await fetchBackupContent(backupId);
+            const backupEntry = serverBackups.find(backup => backup.id === backupId);
+            const content = await fetchBackupContent(backupId, backupEntry?.downloadUrl);
             if (content) {
                 await db.restore(content);
                 toastService.success('Restore successful!');
@@ -468,7 +505,8 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
         setIsLoading(true);
         setLoadingMessage('Downloading backup...');
         try {
-            const content = await fetchBackupContent(backupId);
+            const backupEntry = serverBackups.find(backup => backup.id === backupId);
+            const content = await fetchBackupContent(backupId, backupEntry?.downloadUrl);
             if (content) {
                 const blob = new Blob([content], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
@@ -577,15 +615,27 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
         setIsLoading(true);
         setLoadingMessage('Saving AI configuration...');
         try {
+            const sanitizeKey = (k: string) => k.replace(/\s/g, '');
+            const keysToAdd = newGeminiKeys.map((k) => sanitizeKey(k.value)).filter(Boolean);
+            const maskKey = (key: string): string => (key.length > 4 ? '*'.repeat(key.length - 4) + key.slice(-4) : '****');
+            const currentProviderModel = providerModels[aiProvider]?.trim() || '';
             const payload: Record<string, unknown> = {
                 provider: aiProvider,
-                model: aiModel.trim() || undefined,
+                model: currentProviderModel || undefined,
+                ollamaModel: providerModels.ollama.trim() || undefined,
+                geminiModel: providerModels.gemini.trim() || undefined,
+                anythingllmModel: providerModels.anythingllm.trim() || undefined,
+                openaiModel: providerModels.openai.trim() || undefined,
                 ollamaUrl: ollamaUrl.trim() || undefined,
                 anythingllmUrl: anythingllmUrl.trim() || undefined,
+                openaiBaseUrl: openaiBaseUrl.trim() || undefined,
             };
 
-            if (geminiApiKey.trim()) payload.geminiApiKey = geminiApiKey.trim();
+            if (keysToAdd.length > 0) {
+                payload.geminiApiKeys = keysToAdd.map((key) => ({ key }));
+            }
             if (anythingllmApiKey.trim()) payload.anythingllmApiKey = anythingllmApiKey.trim();
+            if (openaiApiKey.trim()) payload.openaiApiKey = openaiApiKey.trim();
 
             const res = await fetch('/api/ai/config', {
                 method: 'PUT',
@@ -598,6 +648,20 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                 throw new Error(err.error || 'Failed to save AI config');
             }
 
+            // Keep the saved keys visible immediately, even if refresh fetch is delayed.
+            if (keysToAdd.length > 0) {
+                setGeminiApiKeys((prev) => {
+                    const optimistic = keysToAdd.map((key) => ({ masked: maskKey(key), isExhausted: false }));
+                    const merged = [...prev, ...optimistic];
+                    const deduped = new Map<string, { masked: string; exhaustedUntil?: number; isExhausted?: boolean }>();
+                    for (const entry of merged) {
+                        if (!deduped.has(entry.masked)) deduped.set(entry.masked, entry);
+                    }
+                    return Array.from(deduped.values());
+                });
+                setHasGeminiKey(true);
+            }
+
             const [configRes, healthRes] = await Promise.all([
                 fetch('/api/ai/config'),
                 fetch('/api/ai/health'),
@@ -605,8 +669,17 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
 
             if (configRes.ok) {
                 const cfg = await configRes.json();
+                const fetchedGeminiKeys = Array.isArray(cfg.geminiApiKeys) ? cfg.geminiApiKeys : [];
+                // Avoid wiping optimistic state if backend returns an empty list unexpectedly.
+                if (fetchedGeminiKeys.length > 0 || keysToAdd.length === 0) {
+                    setGeminiApiKeys(fetchedGeminiKeys);
+                }
                 setHasGeminiKey(!!cfg.hasGeminiKey);
                 setHasAnythingllmKey(!!cfg.hasAnythingllmKey);
+                setHasOpenaiKey(!!cfg.hasOpenaiKey);
+                if (keysToAdd.length > 0) {
+                    setNewGeminiKeys([{ value: '', visible: false }]);
+                }
             }
             if (healthRes.ok) {
                 const health = await healthRes.json();
@@ -614,14 +687,33 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                 setActiveAiProvider(health.provider || 'none');
             }
 
-            setGeminiApiKey('');
             setAnythingllmApiKey('');
+            setOpenaiApiKey('');
             toastService.success('AI configuration saved.');
         } catch (e: any) {
             toastService.error(`Failed to save AI config: ${e.message}`);
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleAddGeminiKeyField = () => {
+        setNewGeminiKeys((prev) => [...prev, { value: '', visible: false }]);
+    };
+
+    const handleUpdateGeminiKeyField = (index: number, value: string) => {
+        setNewGeminiKeys((prev) => prev.map((k, i) => (i === index ? { ...k, value } : k)));
+    };
+
+    const handleToggleGeminiKeyVisibility = (index: number) => {
+        setNewGeminiKeys((prev) => prev.map((k, i) => (i === index ? { ...k, visible: !k.visible } : k)));
+    };
+
+    const handleRemoveGeminiKeyField = (index: number) => {
+        setNewGeminiKeys((prev) => {
+            if (prev.length <= 1) return [{ value: '', visible: false }];
+            return prev.filter((_, i) => i !== index);
+        });
     };
 
     return (
@@ -964,16 +1056,28 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                             <option value="gemini">Gemini</option>
                                             <option value="ollama">Ollama</option>
                                             <option value="anythingllm">AnythingLLM</option>
+                                            <option value="openai">OpenAI</option>
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Model</label>
+                                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">{aiProvider.charAt(0).toUpperCase() + aiProvider.slice(1)} Model</label>
                                         <input
                                             type="text"
                                             aria-label="AI model"
-                                            value={aiModel}
-                                            onChange={(e) => setAiModel(e.target.value)}
-                                            placeholder={aiProvider === 'gemini' ? 'gemini-2.5-flash' : 'llama3.2'}
+                                            value={providerModels[aiProvider]}
+                                            onChange={(e) => {
+                                                const nextValue = e.target.value;
+                                                setProviderModels((prev) => ({
+                                                    ...prev,
+                                                    [aiProvider]: nextValue,
+                                                }));
+                                            }}
+                                            placeholder={{
+                                                gemini: 'gemini-2.5-flash',
+                                                ollama: 'llama3.2',
+                                                anythingllm: 'llama3.1:8b',
+                                                openai: 'gpt-4o-mini',
+                                            }[aiProvider]}
                                             className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
                                         />
                                     </div>
@@ -981,16 +1085,63 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
 
                                 {aiProvider === 'gemini' && (
                                     <div>
-                                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Gemini API Key</label>
-                                        <input
-                                            type="password"
-                                            aria-label="Gemini API key"
-                                            value={geminiApiKey}
-                                            onChange={(e) => setGeminiApiKey(e.target.value)}
-                                            placeholder={hasGeminiKey ? 'Key already saved (enter to replace)' : 'Paste your Gemini API key'}
-                                            className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
-                                        />
-                                        <p className="text-xs text-zinc-500 mt-1">Google login alone is not enough here; use a Gemini API key.</p>
+                                        <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Gemini API Keys</label>
+                                        <p className="text-xs text-zinc-500 mb-1">Multiple keys enable quota rotation across requests.</p>
+                                        <p className="text-xs text-zinc-500 mb-3">Click Add Key to create another input field. Save AI Configuration to persist all entered keys.</p>
+                                        
+                                        {geminiApiKeys.length > 0 && (
+                                            <div className="mb-4 space-y-2">
+                                                {geminiApiKeys.map((key, idx) => (
+                                                    <div key={idx} className="flex items-center justify-between p-2 bg-zinc-100 dark:bg-zinc-800 rounded-md border border-zinc-300 dark:border-zinc-600">
+                                                        <div className="flex-1">
+                                                            <span className="block max-w-full break-all text-sm font-mono">Key {idx + 1}: {key.masked}</span>
+                                                            {key.isExhausted && (
+                                                                <span className="ml-2 text-xs text-yellow-600 dark:text-yellow-400">⚠️ Exhausted (rotating to next key)</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        
+                                        <div className="space-y-2">
+                                            {newGeminiKeys.map((field, idx) => (
+                                                <div key={idx} className="flex min-w-0 flex-col gap-2 sm:flex-row">
+                                                    <input
+                                                        type={field.visible ? 'text' : 'password'}
+                                                        aria-label={`New Gemini API key ${idx + 1}`}
+                                                        value={field.value}
+                                                        onChange={(e) => handleUpdateGeminiKeyField(idx, e.target.value)}
+                                                        placeholder={`Paste Gemini API key ${idx + 1}`}
+                                                        className="w-full min-w-0 flex-1 rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                                    />
+                                                    <div className="flex shrink-0 gap-2">
+                                                        <button
+                                                            onClick={() => handleToggleGeminiKeyVisibility(idx)}
+                                                            className="px-3 py-2 bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 rounded-lg text-sm font-semibold hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors"
+                                                        >
+                                                            {field.visible ? 'Hide' : 'Show'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleRemoveGeminiKeyField(idx)}
+                                                            disabled={newGeminiKeys.length <= 1}
+                                                            className="px-3 py-2 bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 rounded-lg text-sm font-semibold hover:bg-zinc-300 dark:hover:bg-zinc-600 disabled:opacity-40 transition-colors"
+                                                        >
+                                                            Remove
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            <div className="flex justify-start pt-1">
+                                                <button
+                                                    onClick={handleAddGeminiKeyField}
+                                                    className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors"
+                                                >
+                                                    Add Key
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-zinc-500 mt-2">Saved keys are masked for security, with only a small suffix visible.</p>
                                     </div>
                                 )}
 
@@ -1035,9 +1186,38 @@ const Settings: React.FC<SettingsProps> = ({ onRestoreSuccess, onManualRestoreCh
                                     </div>
                                 )}
 
+                                {aiProvider === 'openai' && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">OpenAI Base URL</label>
+                                            <input
+                                                type="text"
+                                                aria-label="OpenAI base URL"
+                                                value={openaiBaseUrl}
+                                                onChange={(e) => setOpenaiBaseUrl(e.target.value)}
+                                                placeholder="https://api.openai.com"
+                                                className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">OpenAI API Key</label>
+                                            <input
+                                                type="password"
+                                                aria-label="OpenAI API key"
+                                                value={openaiApiKey}
+                                                onChange={(e) => setOpenaiApiKey(e.target.value)}
+                                                placeholder={hasOpenaiKey ? 'Key already saved (enter to replace)' : 'Paste API key'}
+                                                className="w-full rounded-md border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="flex justify-end">
                                     <button
-                                        onClick={handleSaveAiConfig}
+                                        onClick={() => {
+                                            void handleSaveAiConfig();
+                                        }}
                                         className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors"
                                     >
                                         Save AI Configuration

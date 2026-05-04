@@ -13,8 +13,16 @@ import { useNavigate } from 'react-router-dom';
 import { backgroundTaskService } from '../services/backgroundTaskService';
 import { manualTriggerBackup } from '../services/backupService';
 import { AppContext } from './AppContext';
+import { loadBookEditorUiState, patchBookEditorUiState } from '../services/bookEditorUiState';
 
 type GenerationMode = 'full' | 'budget';
+
+const STOP_REMAINING_GENERATION_ERROR = '__STOP_REMAINING_GENERATION__';
+
+const isQuotaExceededError = (message: string): boolean => {
+    const msg = message.toLowerCase();
+    return msg.includes('quota') || msg.includes('resource_exhausted') || msg.includes('rate limit') || msg.includes('429');
+};
 
 interface BookEditorContextType {
     book: Book | null;
@@ -101,6 +109,8 @@ interface BookEditorContextType {
     handleGenerateChapters: () => Promise<void>;
     handleGenerateSpecificChapter: (index: number, targetWordCount?: number) => Promise<void>;
     handleGenerateFullBook: () => Promise<void>;
+    handleStopGenerateFullBook: () => void;
+    isGeneratingRemainingBook: boolean;
     handleRebuildOutline: (targetChapterCount: number) => Promise<void>;
     isRebuildingOutline: boolean;
     
@@ -270,6 +280,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const [isSyncing, setIsSyncing] = useState(false);
     
     const editorsRef = useRef<Map<number, Editor>>(new Map());
+    const latestBookRef = useRef<Book | null>(null);
     const [activeEditorInstance, setActiveEditorInstance] = useState<Editor | null>(null);
     const [isAssistantLoading, setIsAssistantLoading] = useState(false);
 
@@ -302,8 +313,10 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     
     const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
     const [isGeneratingChapter, setIsGeneratingChapter] = useState<number | null>(null);
+    const [isGeneratingRemainingBook, setIsGeneratingRemainingBook] = useState(false);
     const [isRebuildingOutline, setIsRebuildingOutline] = useState(false);
     const [generationMode, setGenerationMode] = useState<GenerationMode>('budget');
+    const stopRemainingGenerationRef = useRef(false);
     const [generatingSubSection, setGeneratingSubSection] = useState<{ chapter: number, section: number } | null>(null);
     
     const [snapshots, setSnapshots] = useState<BookSnapshot[]>([]);
@@ -341,6 +354,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     
     const [isAutocompleteEnabled, setIsAutocompleteEnabled] = useState(false); // Default off
     const [customPersonas, setCustomPersonas] = useState<CustomPersona[]>([]);
+    const [isBookEditorUiStateLoaded, setIsBookEditorUiStateLoaded] = useState(false);
 
     const geminiTTSVoices = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'];
 
@@ -367,6 +381,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                 if (changed) bookData.outline = outlineWithIds;
 
                 setBook(bookData);
+                latestBookRef.current = bookData;
                 setChatMessages(bookData.bookChatHistory || []);
                 
                 if (bookData.seriesId) {
@@ -380,28 +395,49 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                 const snaps = await fetchSnapshotsForBook(bookId);
                 setSnapshots(snaps.sort((a, b) => b.createdAt - a.createdAt));
                 
-                const personaSetting = await db.settings.get('customPersonas');
+                const [personaSetting, editorUiState] = await Promise.all([
+                    db.settings.get('customPersonas'),
+                    loadBookEditorUiState(),
+                ]);
                 if (personaSetting && Array.isArray(personaSetting.value)) {
                     setCustomPersonas(personaSetting.value);
                 }
+                setIsMetadataOpen(editorUiState.isMetadataOpen);
 
             } catch (e) {
                 console.error(e);
                 toastService.error("Failed to load book");
             } finally {
+                setIsBookEditorUiStateLoaded(true);
                 setIsLoading(false);
             }
         };
         loadBook();
     }, [bookId, onBack, fetchSnapshotsForBook]);
 
+    useEffect(() => {
+        latestBookRef.current = book;
+    }, [book]);
+
+    useEffect(() => {
+        if (!isBookEditorUiStateLoaded) return;
+        void patchBookEditorUiState({ isMetadataOpen });
+    }, [isMetadataOpen, isBookEditorUiStateLoaded]);
+
     // --- HELPERS ---
     const updateLocalBook = (updates: Partial<Book>) => {
         setBook(prev => {
             if (!prev) return null;
-            return { ...prev, ...updates };
+            const next = { ...prev, ...updates };
+            latestBookRef.current = next;
+            return next;
         });
         setSaveStatus('unsaved');
+    };
+
+    const setTrackedBook = (nextBook: Book) => {
+        latestBookRef.current = nextBook;
+        setBook(nextBook);
     };
     
     const getPersonaInstructionText = useCallback((personaName: string) => {
@@ -458,18 +494,18 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const handleTitleChange = (e: React.FocusEvent<HTMLElement>) => { updateLocalBook({ topic: e.currentTarget.textContent || '' }); };
     const handleSubtitleChange = (e: React.FocusEvent<HTMLElement>) => { updateLocalBook({ subtitle: e.currentTarget.textContent || '' }); };
     const handleChapterTitleChange = (e: React.FocusEvent<HTMLElement>, index: number) => { if (!book) return; const newOutline = produce(book.outline, draft => { draft[index].title = e.currentTarget.textContent || ''; }); updateLocalBook({ outline: newOutline }); const newContent = produce(book.content, draft => { if (draft[index]) { draft[index].title = e.currentTarget.textContent || ''; } }); updateLocalBook({ content: newContent }); };
-    const handleContentChange = useCallback((index: number, newHtml: string) => { if (!book) return; setBook(prev => { if (!prev) return null; if (prev.content[index]?.htmlContent === newHtml) return prev; const newContent = [...prev.content]; while (newContent.length <= index) { newContent.push({ title: prev.outline[newContent.length]?.title || '', htmlContent: '' }); } newContent[index] = { ...newContent[index], htmlContent: newHtml }; return { ...prev, content: newContent }; }); setSaveStatus('unsaved'); }, [book]);
+    const handleContentChange = useCallback((index: number, newHtml: string) => { if (!book) return; setBook(prev => { if (!prev) return null; if (prev.content[index]?.htmlContent === newHtml) return prev; const newContent = [...prev.content]; while (newContent.length <= index) { newContent.push({ title: prev.outline[newContent.length]?.title || '', htmlContent: '' }); } newContent[index] = { ...newContent[index], htmlContent: newHtml }; const next = { ...prev, content: newContent }; latestBookRef.current = next; return next; }); setSaveStatus('unsaved'); }, [book]);
     const handleUpdatePart = (index: number, newPartTitle: string) => { if (!book) return; const newOutline = produce(book.outline, draft => { draft[index].part = newPartTitle; }); updateLocalBook({ outline: newOutline }); };
     const handleUpdatePartContent = (index: number, newContent: string) => { if (!book) return; const newOutline = produce(book.outline, draft => { draft[index].partContent = newContent; }); updateLocalBook({ outline: newOutline }); };
     const handlePropagatePart = (index: number) => { if (!book) return; const partName = book.outline[index].part; if (!partName) return; const newOutline = produce(book.outline, draft => { for (let i = index + 1; i < draft.length; i++) { if (draft[i].part && draft[i].part !== partName) break; draft[i].part = partName; } }); updateLocalBook({ outline: newOutline }); toastService.success(`Applied "${partName}" to subsequent chapters.`); };
-    const handleSaveToDB = useCallback(async () => { if (!book) return; setSaveStatus('saving'); try { const chatHistoryToSave = (chatMessages || []).map(m => ({ ...m, role: m.role || 'model' })) as ChatMessage[]; await updateBook({ ...book, bookChatHistory: chatHistoryToSave }); setSaveStatus('saved'); } catch (e) { console.error(e); setSaveStatus('unsaved'); toastService.error("Failed to save"); } }, [book, updateBook, chatMessages]);
+    const handleSaveToDB = useCallback(async (bookOverride?: Book) => { const bookToSave = bookOverride ?? latestBookRef.current ?? book; if (!bookToSave) return; setSaveStatus('saving'); try { const chatHistoryToSave = (chatMessages || []).map(m => ({ ...m, role: m.role || 'model' })) as ChatMessage[]; await updateBook({ ...bookToSave, bookChatHistory: chatHistoryToSave }); setSaveStatus('saved'); } catch (e) { console.error(e); setSaveStatus('unsaved'); toastService.error("Failed to save"); } }, [book, updateBook, chatMessages]);
     useEffect(() => { const interval = setInterval(() => { if (saveStatus === 'unsaved') { handleSaveToDB(); } }, 5000); return () => clearInterval(interval); }, [saveStatus, handleSaveToDB]);
     const handleSaveAndSync = async () => { await handleSaveToDB(); setIsSyncing(true); try { await manualTriggerBackup(); } catch (e) { } finally { setIsSyncing(false); } };
-    const handleAddChapter = useCallback((index: number, position: 'before' | 'after') => { if (!book) return; const newIndex = position === 'after' ? index + 1 : index; const newChapter: ChapterOutline = { id: crypto.randomUUID(), title: 'New Chapter', summary: 'Describe the chapter here...', status: 'todo' }; if (book.outline[index]) { newChapter.part = book.outline[index].part; } const newOutline = [...book.outline]; newOutline.splice(newIndex, 0, newChapter); const newContent = [...book.content]; newContent.splice(newIndex, 0, { title: newChapter.title, htmlContent: '' }); setBook({ ...book, outline: newOutline, content: newContent }); setSaveStatus('unsaved'); setActiveChapterIndex(newIndex); toastService.success("Chapter added."); }, [book]);
-    const handleDeleteChapter = useCallback(async (index: number) => { if (!book) return; const confirmed = await modalService.confirm({ title: 'Delete Chapter?', message: `Are you sure you want to delete "${book.outline[index].title}"? This action cannot be undone.`, danger: true, confirmText: 'Delete' }); if (confirmed) { const newOutline = [...book.outline]; const newContent = [...book.content]; newOutline.splice(index, 1); newContent.splice(index, 1); const updatedBook = { ...book, outline: newOutline, content: newContent }; setBook(updatedBook); setSaveStatus('unsaved'); if (activeChapterIndex >= newOutline.length) { setActiveChapterIndex(Math.max(0, newOutline.length - 1)); } toastService.info("Chapter deleted."); } }, [book, activeChapterIndex]);
-    const handleMoveChapter = useCallback((fromIndex: number, toIndex: number) => { if (!book) return; if (fromIndex === toIndex) return; const newOutline = [...book.outline]; const newContent = [...book.content]; const [movedOutline] = newOutline.splice(fromIndex, 1); newOutline.splice(toIndex, 0, movedOutline); const [movedContent] = newContent.splice(fromIndex, 1); newContent.splice(toIndex, 0, movedContent); setBook({ ...book, outline: newOutline, content: newContent }); setSaveStatus('unsaved'); if (activeChapterIndex === fromIndex) { setActiveChapterIndex(toIndex); } else if (activeChapterIndex > fromIndex && activeChapterIndex <= toIndex) { setActiveChapterIndex(activeChapterIndex - 1); } else if (activeChapterIndex < fromIndex && activeChapterIndex >= toIndex) { setActiveChapterIndex(activeChapterIndex + 1); } }, [book, activeChapterIndex]);
-    const handleMergeChapters = async (index: number) => { if (!book || index >= book.outline.length - 1) return; const confirmed = await modalService.confirm({ title: 'Merge Chapters?', message: `Merge "${book.outline[index+1].title}" into "${book.outline[index].title}"? The content will be combined and the second chapter removed.`, confirmText: 'Merge' }); if (confirmed) { const currentContent = book.content[index]?.htmlContent || ''; const nextContent = book.content[index+1]?.htmlContent || ''; const mergedContent = `${currentContent}<hr/><p><em>(Merged from ${book.outline[index+1].title})</em></p>${nextContent}`; const newContent = [...book.content]; newContent[index] = { ...newContent[index], htmlContent: mergedContent }; newContent.splice(index + 1, 1); const newOutline = [...book.outline]; newOutline[index].summary += `\n\n(Merged): ${newOutline[index+1].summary}`; newOutline.splice(index + 1, 1); setBook({ ...book, outline: newOutline, content: newContent }); setSaveStatus('unsaved'); toastService.success("Chapters merged."); } };
-    const handleUpdateChapterOutline = (index: number, updates: Partial<ChapterOutline>) => { if (!book) return; const newOutline = produce(book.outline, draft => { Object.assign(draft[index], updates); }); let newContent = book.content; if (updates.title && book.content[index]) { newContent = produce(book.content, draft => { draft[index].title = updates.title!; }); } setBook({ ...book, outline: newOutline, content: newContent }); setSaveStatus('unsaved'); };
+    const handleAddChapter = useCallback((index: number, position: 'before' | 'after') => { if (!book) return; const newIndex = position === 'after' ? index + 1 : index; const newChapter: ChapterOutline = { id: crypto.randomUUID(), title: 'New Chapter', summary: 'Describe the chapter here...', status: 'todo' }; if (book.outline[index]) { newChapter.part = book.outline[index].part; } const newOutline = [...book.outline]; newOutline.splice(newIndex, 0, newChapter); const newContent = [...book.content]; newContent.splice(newIndex, 0, { title: newChapter.title, htmlContent: '' }); setTrackedBook({ ...book, outline: newOutline, content: newContent }); setSaveStatus('unsaved'); setActiveChapterIndex(newIndex); toastService.success("Chapter added."); }, [book]);
+    const handleDeleteChapter = useCallback(async (index: number) => { if (!book) return; const confirmed = await modalService.confirm({ title: 'Delete Chapter?', message: `Are you sure you want to delete "${book.outline[index].title}"? This action cannot be undone.`, danger: true, confirmText: 'Delete' }); if (confirmed) { const newOutline = [...book.outline]; const newContent = [...book.content]; newOutline.splice(index, 1); newContent.splice(index, 1); const updatedBook = { ...book, outline: newOutline, content: newContent }; setTrackedBook(updatedBook); setSaveStatus('unsaved'); if (activeChapterIndex >= newOutline.length) { setActiveChapterIndex(Math.max(0, newOutline.length - 1)); } toastService.info("Chapter deleted."); } }, [book, activeChapterIndex]);
+    const handleMoveChapter = useCallback((fromIndex: number, toIndex: number) => { if (!book) return; if (fromIndex === toIndex) return; const newOutline = [...book.outline]; const newContent = [...book.content]; const [movedOutline] = newOutline.splice(fromIndex, 1); newOutline.splice(toIndex, 0, movedOutline); const [movedContent] = newContent.splice(fromIndex, 1); newContent.splice(toIndex, 0, movedContent); setTrackedBook({ ...book, outline: newOutline, content: newContent }); setSaveStatus('unsaved'); if (activeChapterIndex === fromIndex) { setActiveChapterIndex(toIndex); } else if (activeChapterIndex > fromIndex && activeChapterIndex <= toIndex) { setActiveChapterIndex(activeChapterIndex - 1); } else if (activeChapterIndex < fromIndex && activeChapterIndex >= toIndex) { setActiveChapterIndex(activeChapterIndex + 1); } }, [book, activeChapterIndex]);
+    const handleMergeChapters = async (index: number) => { if (!book || index >= book.outline.length - 1) return; const confirmed = await modalService.confirm({ title: 'Merge Chapters?', message: `Merge "${book.outline[index+1].title}" into "${book.outline[index].title}"? The content will be combined and the second chapter removed.`, confirmText: 'Merge' }); if (confirmed) { const currentContent = book.content[index]?.htmlContent || ''; const nextContent = book.content[index+1]?.htmlContent || ''; const mergedContent = `${currentContent}<hr/><p><em>(Merged from ${book.outline[index+1].title})</em></p>${nextContent}`; const newContent = [...book.content]; newContent[index] = { ...newContent[index], htmlContent: mergedContent }; newContent.splice(index + 1, 1); const newOutline = [...book.outline]; newOutline[index].summary += `\n\n(Merged): ${newOutline[index+1].summary}`; newOutline.splice(index + 1, 1); setTrackedBook({ ...book, outline: newOutline, content: newContent }); setSaveStatus('unsaved'); toastService.success("Chapters merged."); } };
+    const handleUpdateChapterOutline = (index: number, updates: Partial<ChapterOutline>) => { if (!book) return; const newOutline = produce(book.outline, draft => { Object.assign(draft[index], updates); }); let newContent = book.content; if (updates.title && book.content[index]) { newContent = produce(book.content, draft => { draft[index].title = updates.title!; }); } setTrackedBook({ ...book, outline: newOutline, content: newContent }); setSaveStatus('unsaved'); };
 
     // Define handleExecuteTool explicitly
     const handleExecuteTool = async (fc: FunctionCall) => {
@@ -501,7 +537,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
             newOutline.splice(idx, 0, newChapter);
             const newContent = [...book.content];
             newContent.splice(idx, 0, { title: args.title, htmlContent: '' });
-            setBook({ ...book, outline: newOutline, content: newContent });
+            setTrackedBook({ ...book, outline: newOutline, content: newContent });
             setSaveStatus('unsaved');
             toastService.success(`Chapter added: ${args.title}`);
         } else if (fc.name === 'deleteChapter') {
@@ -562,7 +598,9 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                 const newContent = [...prev.content];
                 if (!newContent[index]) newContent[index] = { title: chapterOutline.title, htmlContent: '' };
                 else newContent[index] = { ...newContent[index], htmlContent: '' };
-                return { ...prev, content: newContent };
+                const next = { ...prev, content: newContent };
+                latestBookRef.current = next;
+                return next;
             });
             await gemini.generateChapterContent(
                 book.topic,
@@ -578,7 +616,9 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                         const newContent = [...prev.content];
                         const currentHtml = newContent[index]?.htmlContent || '';
                         newContent[index] = { title: chapterOutline.title, htmlContent: currentHtml + chunk };
-                        return { ...prev, content: newContent };
+                        const next = { ...prev, content: newContent };
+                        latestBookRef.current = next;
+                        return next;
                     });
                 },
                 book.language || 'en',
@@ -637,7 +677,9 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                         const newContent = [...prev.content];
                         const currentHtml = newContent[targetIndex]?.htmlContent || '';
                         newContent[targetIndex] = { title: chapterOutline.title, htmlContent: currentHtml + chunk };
-                        return { ...prev, content: newContent };
+                        const next = { ...prev, content: newContent };
+                        latestBookRef.current = next;
+                        return next;
                     });
                 },
                 book.language || 'en',
@@ -674,6 +716,10 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
 
     const handleGenerateFullBook = async () => {
         if (!book) return;
+        if (isGeneratingRemainingBook) {
+            toastService.info('Remaining-chapter generation is already running.');
+            return;
+        }
 
         let nextIndex = book.content.findIndex(c => !c || !c.htmlContent.trim());
         if (nextIndex === -1 && book.content.length < book.outline.length) {
@@ -691,7 +737,29 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         });
         if (!confirmed) return;
 
+        stopRemainingGenerationRef.current = false;
+        setIsGeneratingRemainingBook(true);
+        let stoppedByUser = false;
+        let quotaExceeded = false;
+        let generationFailed = false;
+
+        const isAiQuotaExhausted = async (): Promise<boolean> => {
+            try {
+                const res = await fetch('/api/ai/quota');
+                if (!res.ok) return false;
+                const data = await res.json() as { status?: string };
+                return data.status === 'exhausted';
+            } catch {
+                return false;
+            }
+        };
+
         for (let i = nextIndex; i < book.outline.length; i++) {
+            if (stopRemainingGenerationRef.current) {
+                stoppedByUser = true;
+                break;
+            }
+
             setIsGeneratingChapter(i);
             setActiveChapterIndex(i);
             document.getElementById(`chapter-${i}`)?.scrollIntoView();
@@ -716,19 +784,25 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                     outline,
                     chatMessages || [],
                     (chunk) => {
+                        if (stopRemainingGenerationRef.current) {
+                            throw new Error(STOP_REMAINING_GENERATION_ERROR);
+                        }
                         generatedHtml += chunk;
                         setBook(prev => {
                             if (!prev) return null;
                             const newContent = [...prev.content];
                             const currentHtml = newContent[i]?.htmlContent || '';
                             newContent[i] = { title: outline.title, htmlContent: currentHtml + chunk };
-                            return { ...prev, content: newContent };
+                            const next = { ...prev, content: newContent };
+                            latestBookRef.current = next;
+                            return next;
                         });
                     },
                     book.language || 'en',
                     book.wordCountGoal && book.outline.length ? Math.round(book.wordCountGoal / book.outline.length) : 1000
                 );
 
+                let finalHtml = generatedHtml;
                 if (generationMode === 'full') {
                     if (generatedHtml.trim()) {
                         const polished = await gemini.validateAndPolishChapterContent(
@@ -740,24 +814,69 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
                             seriesKnowledgeBase,
                             book.language || 'en'
                         );
-                        handleContentChange(i, polished);
+                        finalHtml = polished;
                     }
                 }
 
-                await handleSaveToDB();
+                const currentBook = latestBookRef.current ?? book;
+                const persistedContent = [...currentBook.content];
+                while (persistedContent.length <= i) {
+                    persistedContent.push({ title: currentBook.outline[persistedContent.length]?.title || '', htmlContent: '' });
+                }
+                persistedContent[i] = {
+                    ...persistedContent[i],
+                    title: outline.title,
+                    htmlContent: finalHtml,
+                };
+                const persistedBook: Book = { ...currentBook, content: persistedContent };
+                latestBookRef.current = persistedBook;
+                setBook(persistedBook);
+
+                await handleSaveToDB(persistedBook);
+
+                if (await isAiQuotaExhausted()) {
+                    quotaExceeded = true;
+                    toastService.error('AI quota is exhausted. Auto-generation has been stopped.');
+                    break;
+                }
             } catch (e: any) {
-                toastService.error(`Stopped at chapter ${i + 1}: ${e.message}`);
+                const message = e instanceof Error ? e.message : String(e);
+                if (message === STOP_REMAINING_GENERATION_ERROR) {
+                    stoppedByUser = true;
+                    toastService.info('Auto-generation stopped.');
+                    break;
+                }
+                if (isQuotaExceededError(message)) {
+                    quotaExceeded = true;
+                    toastService.error(`Quota exceeded at chapter ${i + 1}. Auto-generation has been stopped.`);
+                    break;
+                }
+                generationFailed = true;
+                toastService.error(`Stopped at chapter ${i + 1}: ${message}`);
                 break;
             }
         }
 
+        stopRemainingGenerationRef.current = false;
+        setIsGeneratingRemainingBook(false);
         setIsGeneratingChapter(null);
+
+        if (stoppedByUser || quotaExceeded || generationFailed) {
+            return;
+        }
+
         toastService.success(
             generationMode === 'full'
                 ? "Batch generation complete with validation."
                 : "Batch generation complete (budget mode)."
         );
     };
+
+    const handleStopGenerateFullBook = useCallback(() => {
+        if (!isGeneratingRemainingBook) return;
+        stopRemainingGenerationRef.current = true;
+        toastService.info('Stopping auto-generation...');
+    }, [isGeneratingRemainingBook]);
     const handleRebuildOutline = async (targetChapterCount: number) => {
         if (!book) return;
         const writtenCount = book.content.filter(c => c && c.htmlContent.trim()).length;
@@ -776,7 +895,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
             // Sync content array length to new outline length
             const newContent = [...book.content];
             while (newContent.length < newOutline.length) newContent.push({ title: newOutline[newContent.length].title, htmlContent: '' });
-            setBook(prev => prev ? { ...prev, outline: newOutline, content: newContent.slice(0, newOutline.length) } : null);
+            setBook(prev => { if (!prev) return null; const next = { ...prev, outline: newOutline, content: newContent.slice(0, newOutline.length) }; latestBookRef.current = next; return next; });
             setSaveStatus('unsaved');
             toastService.success(`Outline rebuilt with ${newOutline.length} chapters.`);
         } catch (e: any) {
@@ -805,7 +924,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const openImageSuggestionModal = (s: ImageSuggestion) => { setSuggestionToGenerate(s); };
     const closeImageSuggestionModal = () => { setSuggestionToGenerate(null); };
     const handleDownloadAudiobook = (chapterIndex?: number) => { if (chapterIndex !== undefined) { setDownloadModalInitialSelection([chapterIndex]); } else { setDownloadModalInitialSelection([]); } setIsDownloadModalOpen(true); };
-    const handleBrainstormComplete = (outline: ChapterOutline[], finalTitle: string) => { if(!book) return; const newContent = outline.map(ch => { const existing = book.content.find(c => c && c.title === ch.title); return existing || { title: ch.title, htmlContent: '' }; }); setBook({ ...book, topic: finalTitle, outline, content: newContent }); setIsBrainstormModalOpen(false); setSaveStatus('unsaved'); toastService.success("Outline applied!"); };
+    const handleBrainstormComplete = (outline: ChapterOutline[], finalTitle: string) => { if(!book) return; const newContent = outline.map(ch => { const existing = book.content.find(c => c && c.title === ch.title); return existing || { title: ch.title, htmlContent: '' }; }); setTrackedBook({ ...book, topic: finalTitle, outline, content: newContent }); setIsBrainstormModalOpen(false); setSaveStatus('unsaved'); toastService.success("Outline applied!"); };
     const handleOpenAnalysisModal = async (index: number) => { if(!book) return; const content = book.content[index]?.htmlContent; if(!content) { toastService.info("Chapter is empty."); return; } setIsAnalysisModalOpen(true); setIsAnalyzing(true); setAnalysisData({ chapterIndex: index, result: null }); try { const tempDiv = document.createElement('div'); tempDiv.innerHTML = content; const personaText = getPersonaInstructionText(book.aiPersona || 'Standard Co-Author'); const res = await gemini.analyzeChapterContent(content, book, seriesKnowledgeBase, personaText); setAnalysisData({ chapterIndex: index, result: res }); } catch(e: any) { toastService.error(e.message); setIsAnalysisModalOpen(false); } finally { setIsAnalyzing(false); } };
     const handleAnalyzeChapterStyle = async (index: number) => { if(!book) return; setIsStyleAnalysisModalOpen(true); setIsAnalyzingStyle(true); setAnalyzingStyleChapterIndex(index); try { const res = await gemini.analyzeChapterStyle(book.content[index].htmlContent, book.topic, book.instructions); setStyleAnalysisResult(res); } catch(e: any) { toastService.error(e.message); setIsStyleAnalysisModalOpen(false); } finally { setIsAnalyzingStyle(false); } };
     const handleApplyStyleSuggestion = (original: string, replacement: string) => { if (analyzingStyleChapterIndex === null || !book) return; const content = book.content[analyzingStyleChapterIndex].htmlContent; const newContent = content.replace(original, replacement); handleContentChange(analyzingStyleChapterIndex, newContent); setStyleAnalysisResult(prev => prev ? prev.filter(s => s.originalPassage !== original) : null); toastService.success("Suggestion applied."); };
@@ -815,7 +934,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
     const handleApplyMacroOpeningSuggestion = (replacement: string) => { if (!book) return; const content = book.content[activeChapterIndex].htmlContent; const match = content.match(/<p>(.*?)<\/p>/); if (match) { const newContent = content.replace(match[0], `<p>${replacement}</p>`); handleContentChange(activeChapterIndex, newContent); toastService.success("Opening updated."); } else { toastService.error("Could not identify opening paragraph to replace."); } };
     const handleKnowledgeBaseUpdate = (sheets: KnowledgeSheet[]) => { if (!book) return; updateLocalBook({ knowledgeBase: sheets }); };
     const handleAutoFillKnowledgeBase = async () => { if (!book) return; setIsAutoFillingKb(true); try { const allText = book.content.map(c => c.htmlContent).join('\n'); const newSheets = await gemini.autoFillKnowledgeBase(book.topic, allText); const existingNames = new Set((book.knowledgeBase || []).map(s => s.name.toLowerCase())); const uniqueNew = newSheets.filter(s => !existingNames.has(s.name.toLowerCase())); updateLocalBook({ knowledgeBase: [...(book.knowledgeBase || []), ...uniqueNew] }); toastService.success(`Added ${uniqueNew.length} new entries.`); } catch(e: any) { toastService.error(e.message); } finally { setIsAutoFillingKb(false); } };
-    const handleGenerateSubSection = async (chIdx: number, secIdx: number) => { if (!book) return; const subSection = book.outline[chIdx].subSections?.[secIdx]; if (!subSection) return; setGeneratingSubSection({ chapter: chIdx, section: secIdx }); setIsGeneratingChapter(chIdx); try { const chapterOutline = book.outline[chIdx]; const subTopic = subSection.prompt; if (!book.content[chIdx]) { handleContentChange(chIdx, ''); } const chatHist: Content[] = []; const onStream = (chunk: string) => { setBook(prev => { if (!prev) return null; const newContent = [...prev.content]; const currentHtml = newContent[chIdx]?.htmlContent || ''; newContent[chIdx] = { title: chapterOutline.title, htmlContent: currentHtml + chunk }; return { ...prev, content: newContent }; }); }; await gemini.generateSingleSection( book.topic, book.instructions, book.knowledgeBase, seriesKnowledgeBase, chapterOutline, subTopic, chatHist, onStream, book.language || 'en' ); const newOutline = produce(book.outline, draft => { if (draft[chIdx].subSections?.[secIdx]) { draft[chIdx].subSections![secIdx].isGenerated = true; } }); setBook(prev => prev ? { ...prev, outline: newOutline } : null); setSaveStatus('unsaved'); } catch(e: any) { toastService.error(e.message); } finally { setGeneratingSubSection(null); setIsGeneratingChapter(null); } };
+    const handleGenerateSubSection = async (chIdx: number, secIdx: number) => { if (!book) return; const subSection = book.outline[chIdx].subSections?.[secIdx]; if (!subSection) return; setGeneratingSubSection({ chapter: chIdx, section: secIdx }); setIsGeneratingChapter(chIdx); try { const chapterOutline = book.outline[chIdx]; const subTopic = subSection.prompt; if (!book.content[chIdx]) { handleContentChange(chIdx, ''); } const chatHist: Content[] = []; const onStream = (chunk: string) => { setBook(prev => { if (!prev) return null; const newContent = [...prev.content]; const currentHtml = newContent[chIdx]?.htmlContent || ''; newContent[chIdx] = { title: chapterOutline.title, htmlContent: currentHtml + chunk }; const next = { ...prev, content: newContent }; latestBookRef.current = next; return next; }); }; await gemini.generateSingleSection( book.topic, book.instructions, book.knowledgeBase, seriesKnowledgeBase, chapterOutline, subTopic, chatHist, onStream, book.language || 'en' ); setBook(prev => { if (!prev) return null; const newOutline = produce(prev.outline, draft => { if (draft[chIdx].subSections?.[secIdx]) { draft[chIdx].subSections![secIdx].isGenerated = true; } }); const next = { ...prev, outline: newOutline }; latestBookRef.current = next; return next; }); setSaveStatus('unsaved'); } catch(e: any) { toastService.error(e.message); } finally { setGeneratingSubSection(null); setIsGeneratingChapter(null); } };
     const handleGenerateChapterBreakdown = async (chIdx: number) => { if (!book) return; setIsGeneratingChapter(chIdx); try { const outline = book.outline[chIdx]; const breakdown = await gemini.breakdownChapterSummary(book.topic, book.instructions, outline); const subSections = breakdown.map(prompt => ({ prompt, isGenerated: false })); const newOutline = produce(book.outline, draft => { draft[chIdx].subSections = subSections; }); updateLocalBook({ outline: newOutline }); toastService.success("Chapter plan generated."); } catch(e: any) { toastService.error(e.message); } finally { setIsGeneratingChapter(null); } };
     const handleUpdateSubSectionPrompt = (chIdx: number, secIdx: number, val: string) => { if (!book) return; const newOutline = produce(book.outline, draft => { if (draft[chIdx].subSections?.[secIdx]) { draft[chIdx].subSections![secIdx].prompt = val; } }); updateLocalBook({ outline: newOutline }); };
     const handleRemoveSubSection = (chIdx: number, secIdx: number) => { if (!book) return; const newOutline = produce(book.outline, draft => { if (draft[chIdx].subSections) { draft[chIdx].subSections!.splice(secIdx, 1); } }); updateLocalBook({ outline: newOutline }); };
@@ -983,7 +1102,7 @@ export const BookEditorProvider: React.FC<{ bookId: string; onBack: () => void; 
         handleSaveToDB, handleSaveAndSync,
         isSnapshotsPanelOpen, setIsSnapshotsPanelOpen, snapshots, createSnapshot, handleRestoreSnapshot, handleDeleteSnapshot,
         isBrainstormModalOpen, setIsBrainstormModalOpen, handleStartOutlineBrainstorm, handleBrainstormComplete,
-        isGeneratingChapter, generationMode, setGenerationMode, handleGenerateChapters, handleGenerateSpecificChapter, handleGenerateFullBook, handleRebuildOutline, isRebuildingOutline,
+        isGeneratingChapter, generationMode, setGenerationMode, handleGenerateChapters, handleGenerateSpecificChapter, handleGenerateFullBook, handleStopGenerateFullBook, isGeneratingRemainingBook, handleRebuildOutline, isRebuildingOutline,
         isAnalysisModalOpen, setIsAnalysisModalOpen, analysisData, isAnalyzing, handleOpenAnalysisModal, handleExecuteAnalysisAction,
         isStyleAnalysisModalOpen, setIsStyleAnalysisModalOpen, styleAnalysisResult, analyzingStyleChapterIndex, isAnalyzingStyle, handleAnalyzeChapterStyle, handleApplyStyleSuggestion,
         isCharacterVoiceAnalysisModalOpen, setIsCharacterVoiceAnalysisModalOpen, characterVoiceAnalysisResult, isAnalyzingCharacterVoice, handleAnalyzeCharacterVoice, handleApplyCharacterVoiceSuggestion,

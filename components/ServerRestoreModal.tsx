@@ -2,6 +2,7 @@
 import React from 'react';
 import { ICONS } from '../constants';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface ServerBackup {
     id: string;
@@ -187,4 +188,4 @@ const ServerRestoreModal: React.FC<ServerRestoreModalProps> = ({ isOpen, onClose
     );
 };
 
-export default ServerRestoreModal;
+export default withModalPortal(ServerRestoreModal);

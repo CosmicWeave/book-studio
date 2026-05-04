@@ -1,5 +1,6 @@
 
 import React, { useState, useContext, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { AppContext } from '../contexts/AppContext';
 import { ICONS } from '../constants';
@@ -90,6 +91,10 @@ const BookCreationModal: React.FC<BookCreationModalProps> = ({ isOpen, onClose }
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [uiMessages, mode]);
+
+    if (!isOpen) {
+        return null;
+    }
 
     const handleManualStart = () => {
         setMode('manual');
@@ -629,7 +634,7 @@ const BookCreationModal: React.FC<BookCreationModalProps> = ({ isOpen, onClose }
         </div>
     );
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10003] p-4 animate-fade-in" onClick={onClose}>
             <div className="bg-white dark:bg-zinc-800 w-full max-w-4xl h-[80vh] rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                 {/* Header */}
@@ -661,7 +666,8 @@ const BookCreationModal: React.FC<BookCreationModalProps> = ({ isOpen, onClose }
                     {mode === 'manual' && renderManualForm()}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { PacingAnalysisResult, ShowTellAnalysisResult } from '../../types';
 import { ICONS } from '../../constants';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 type DeepAnalysisModalProps = {
     isOpen: boolean;
@@ -119,4 +120,4 @@ const DeepAnalysisModal: React.FC<DeepAnalysisModalProps> = ({ isOpen, onClose, 
     );
 };
 
-export default DeepAnalysisModal;
+export default withModalPortal(DeepAnalysisModal);

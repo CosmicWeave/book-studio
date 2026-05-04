@@ -7,6 +7,7 @@ import { toastService } from '../../services/toastService';
 import { marked } from 'marked';
 import Icon from '../Icon';
 import { Content } from '@google/genai';
+import { withModalPortal } from '../ModalPortal';
 
 interface ProposalData {
     topic: string;
@@ -500,4 +501,4 @@ const NewBookFromChatModal: React.FC<NewBookFromChatModalProps> = ({
     );
 };
 
-export default NewBookFromChatModal;
+export default withModalPortal(NewBookFromChatModal);

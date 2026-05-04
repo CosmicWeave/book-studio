@@ -1,6 +1,7 @@
 
 import React from 'react';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface VoicePromptHelpModalProps {
     isOpen: boolean;
@@ -81,4 +82,4 @@ const VoicePromptHelpModal: React.FC<VoicePromptHelpModalProps> = ({ isOpen, onC
     );
 };
 
-export default VoicePromptHelpModal;
+export default withModalPortal(VoicePromptHelpModal);

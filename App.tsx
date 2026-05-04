@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useCallback, useContext, useRef, useLayoutEffect } from 'react';
-import { HashRouter as Router, Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, useLocation, useNavigate, Navigate, useParams } from 'react-router-dom';
 import { AppContext, AppContextProvider } from './contexts/AppContext';
 import { CommandPaletteProvider, useCommandPaletteActions } from './contexts/CommandPaletteContext';
 import { BookEditorProvider } from './contexts/BookEditorContext';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { db } from './services/apiClient';
+import { db, flushWriteQueue } from './services/apiClient';
 import { initGoogleDriveService, attemptSilentSignIn } from './services/googleDrive';
+import { initGoogleDriveConfig } from './services/googleDriveConfig';
 import { historyService } from './services/historyService';
 import { fetchLatestBackup, initBackupService, manualTriggerBackup } from './services/backupService';
 import { toastService } from './services/toastService';
@@ -63,7 +64,27 @@ const App: React.FC = () => {
     );
 };
 
+// Wrappers that read :id from the URL so the routes are always present
+// and avoid the two-render race where editorBookId/readerBookId state is
+// not yet set on the first render after navigation.
+const BookEditorRoute: React.FC<{ onSave: () => void; onBack: () => void }> = ({ onSave, onBack }) => {
+    const { id } = useParams<{ id: string }>();
+    if (!id) return null;
+    return (
+        <BookEditorProvider bookId={id} onBack={onBack}>
+            <BookEditor onSave={onSave} onBack={onBack} />
+        </BookEditorProvider>
+    );
+};
+
+const ReaderRoute: React.FC = () => {
+    const { id } = useParams<{ id: string }>();
+    if (!id) return null;
+    return <Reader bookId={id} />;
+};
+
 const MainApp: React.FC = () => {
+    const START_PAGE_SETTING_ID = 'startPage';
     const location = useLocation();
     const navigate = useNavigate();
     const { createNewBook, createNewDocument } = useContext(AppContext);
@@ -71,18 +92,18 @@ const MainApp: React.FC = () => {
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [currentPage, setCurrentPage] = useState<any>('dashboard');
-    const [editorBookId, setEditorBookId] = useState<string | null>(null);
-    const [readerBookId, setReaderBookId] = useState<string | null>(null);
     const [modalState, setModalState] = useState<ModalState | null>(null);
     const [isOffline, setIsOffline] = useState(!navigator.onLine);
     const [isInit, setIsInit] = useState(false);
     const [initError, setInitError] = useState<string | null>(null);
+    const [startPage, setStartPage] = useState('dashboard');
     
     // Server restore state
     const [showRestoreModal, setShowRestoreModal] = useState(false);
     const [serverBackupContent, setServerBackupContent] = useState('');
     const [serverBackupTimestamp, setServerBackupTimestamp] = useState(0);
     const [localTimestamp, setLocalTimestamp] = useState(0);
+    const [restoreProgress, setRestoreProgress] = useState<{ stage: string; pct: number } | null>(null);
 
     // File drop restore state
     const [droppedFileContent, setDroppedFileContent] = useState<string | null>(null);
@@ -99,8 +120,8 @@ const MainApp: React.FC = () => {
 
     // Stable navigation callback to prevent re-renders
     const navigateHome = useCallback(() => {
-      navigate('/dashboard');
-    }, [navigate]);
+            navigate(`/${startPage}`);
+        }, [navigate, startPage]);
 
     useEffect(() => {
         const initServices = async () => {
@@ -108,7 +129,17 @@ const MainApp: React.FC = () => {
             await db.init();
             await historyService.init();
             await initBackupService();
+            await initGoogleDriveConfig();
             await initGoogleDriveService();
+                        const startPageSetting = await db.settings.get(START_PAGE_SETTING_ID);
+                        if (typeof startPageSetting?.value === 'string' && startPageSetting.value.length > 0) {
+                                setStartPage(startPageSetting.value);
+                        } else {
+                                const legacyStartPage = localStorage.getItem('start_page') || 'dashboard';
+                                setStartPage(legacyStartPage);
+                                await db.settings.put({ id: START_PAGE_SETTING_ID, value: legacyStartPage });
+                                localStorage.removeItem('start_page');
+                        }
             attemptSilentSignIn();
             
             // Check for Shared Content from PWA Share Target
@@ -150,6 +181,18 @@ const MainApp: React.FC = () => {
         return () => unsubscribeModal();
     }, []);
 
+    useEffect(() => {
+        const onStartPageChange = (event: Event) => {
+            const detail = (event as CustomEvent<{ startPage?: string }>).detail;
+            if (detail?.startPage) {
+                setStartPage(detail.startPage);
+            }
+        };
+
+        window.addEventListener('app-start-page-changed', onStartPageChange);
+        return () => window.removeEventListener('app-start-page-changed', onStartPageChange);
+    }, []);
+
     // Global Error Handling
     useEffect(() => {
         const handleError = (event: ErrorEvent) => {
@@ -183,6 +226,7 @@ const MainApp: React.FC = () => {
             setIsOffline(!navigator.onLine);
             if (navigator.onLine) {
                 toastService.success("You are back online.");
+                flushWriteQueue();
             } else {
                 toastService.info("You are offline. AI features are unavailable.");
             }
@@ -221,18 +265,14 @@ const MainApp: React.FC = () => {
         const rootPath = pathSegments[1] || 'dashboard';
         
         if (rootPath === 'editor' && pathSegments[2]) {
-            setEditorBookId(pathSegments[2]);
             setCurrentPage('editor');
         } else if (rootPath === 'reader' && pathSegments[2]) {
-            setReaderBookId(pathSegments[2]);
             setCurrentPage('reader');
         } else if (rootPath === 'series' && pathSegments[2]) {
             setCurrentPage('series');
         } else if (rootPath === 'documents' && pathSegments[2]) {
             setCurrentPage('editor'); // Re-use editor layout hiding logic
         } else {
-            setEditorBookId(null);
-            setReaderBookId(null);
             setCurrentPage(rootPath);
         }
 
@@ -340,14 +380,18 @@ const MainApp: React.FC = () => {
     }, [registerCommands, unregisterCommands, navigate, createNewBook, createNewDocument, initError]);
 
     const handleRestoreFromServer = async () => {
+        setShowRestoreModal(false);
+        setRestoreProgress({ stage: 'Starting…', pct: 0 });
         try {
-            await db.restore(serverBackupContent);
+            await db.restore(serverBackupContent, (stage, pct) => {
+                setRestoreProgress({ stage, pct });
+            });
             toastService.success('Restore from server successful!');
-            window.location.reload(); // Force a full reload to reflect new data
+            window.location.reload();
         } catch (e: any) {
             toastService.error(`Restore failed: ${e.message}`);
         } finally {
-            setShowRestoreModal(false);
+            setRestoreProgress(null);
         }
     };
     
@@ -503,42 +547,38 @@ const MainApp: React.FC = () => {
     const isGeneralEditor = location.pathname.startsWith('/documents/');
 
     return (
-        <div className="flex h-screen bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+        <div className="flex h-screen flex-col bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
             {isOffline && (
                 <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-xs font-bold text-center py-1 z-[10000]">
                     OFFLINE MODE - Changes saved locally
                 </div>
             )}
-            {!isFullScreenPage && !isGeneralEditor && <Sidebar currentPage={currentPage} isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />}
-            <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${(!isFullScreenPage && !isGeneralEditor) && 'lg:ml-64'}`}>
-                {!isFullScreenPage && !isGeneralEditor && <Header onMenuClick={() => setIsSidebarOpen(true)} />}
-                
-                {/* Wrap main content area with PullToRefresh */}
-                <PullToRefresh onRefresh={handleRefresh} scrollRef={mainScrollRef} className={isOffline ? 'pt-6' : ''}>
-                    <main ref={mainScrollRef} className="flex-1 min-h-full pb-10">
-                        <Routes>
-                            <Route path="/" element={<Navigate to={`/${localStorage.getItem('start_page') || 'dashboard'}`} replace />} />
-                            <Route path="/dashboard" element={<Dashboard />} />
-                            <Route path="/documents" element={<DocumentsDashboard />} />
-                            <Route path="/documents/:id" element={<GeneralEditor />} />
-                            <Route path="/reading" element={<CurrentlyReading />} />
-                            <Route path="/instructions" element={<InstructionsManager />} />
-                            <Route path="/macros" element={<MacrosManager />} />
-                            <Route path="/settings" element={<Settings onRestoreSuccess={async () => navigateHome()} onManualRestoreCheck={handleManualRestoreCheck} />} />
-                            <Route path="/archived" element={<Archived />} />
-                            <Route path="/trash" element={<Trash />} />
-                            <Route path="/series/:id" element={<SeriesManager />} />
-                            {editorBookId && (
-                                <Route path="/editor/:id" element={
-                                    <BookEditorProvider bookId={editorBookId} onBack={navigateHome}>
-                                        <BookEditor onSave={navigateHome} onBack={navigateHome} />
-                                    </BookEditorProvider>
-                                } />
-                            )}
-                            {readerBookId && <Route path="/reader/:id" element={<Reader bookId={readerBookId} />} />}
-                        </Routes>
-                    </main>
-                </PullToRefresh>
+            <div className="flex min-h-0 flex-1">
+                {!isFullScreenPage && !isGeneralEditor && <Sidebar currentPage={currentPage} isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />}
+                <div className={`flex min-h-0 flex-1 flex-col transition-all duration-300 ease-in-out ${(!isFullScreenPage && !isGeneralEditor) && 'lg:ml-64'}`}>
+                    {!isFullScreenPage && !isGeneralEditor && <Header onMenuClick={() => setIsSidebarOpen(true)} />}
+                    
+                    {/* Wrap main content area with PullToRefresh */}
+                    <PullToRefresh onRefresh={handleRefresh} scrollRef={mainScrollRef} className={isOffline ? 'pt-6' : ''}>
+                        <main ref={mainScrollRef} className="flex-1 min-h-0">
+                            <Routes>
+                                <Route path="/" element={<Navigate to={`/${startPage}`} replace />} />
+                                <Route path="/dashboard" element={<Dashboard />} />
+                                <Route path="/documents" element={<DocumentsDashboard />} />
+                                <Route path="/documents/:id" element={<GeneralEditor />} />
+                                <Route path="/reading" element={<CurrentlyReading />} />
+                                <Route path="/instructions" element={<InstructionsManager />} />
+                                <Route path="/macros" element={<MacrosManager />} />
+                                <Route path="/settings" element={<Settings onRestoreSuccess={async () => navigateHome()} onManualRestoreCheck={handleManualRestoreCheck} />} />
+                                <Route path="/archived" element={<Archived />} />
+                                <Route path="/trash" element={<Trash />} />
+                                <Route path="/series/:id" element={<SeriesManager />} />
+                                <Route path="/editor/:id" element={<BookEditorRoute onSave={navigateHome} onBack={navigateHome} />} />
+                                <Route path="/reader/:id" element={<ReaderRoute />} />
+                            </Routes>
+                        </main>
+                    </PullToRefresh>
+                </div>
             </div>
             <AppStatusBar isOffline={isOffline} />
             <ToastContainer />
@@ -550,6 +590,22 @@ const MainApp: React.FC = () => {
             <FloatingAudioPlayer />
             <AudiobookGenerationIndicator />
             <InstallPrompt />
+            {restoreProgress && (
+                <div className="fixed inset-0 z-[99999] bg-black/70 backdrop-blur-sm flex items-center justify-center">
+                    <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4 text-center">
+                        <div className="text-4xl mb-4">☁️</div>
+                        <h2 className="text-lg font-bold text-zinc-800 dark:text-zinc-100 mb-1">Restoring from backup…</h2>
+                        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-5">{restoreProgress.stage}</p>
+                        <div className="w-full bg-zinc-200 dark:bg-zinc-700 rounded-full h-2.5 overflow-hidden">
+                            <div
+                                className="bg-indigo-500 h-2.5 rounded-full transition-all duration-300"
+                                style={{ width: `${restoreProgress.pct}%` }}
+                            />
+                        </div>
+                        <p className="text-xs text-zinc-400 mt-2">{restoreProgress.pct}%</p>
+                    </div>
+                </div>
+            )}
             {showRestoreModal && (
                 <RestoreFromServerModal
                     backupTimestamp={serverBackupTimestamp}

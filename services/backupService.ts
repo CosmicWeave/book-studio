@@ -3,6 +3,15 @@ import { Book } from '../types';
 import { db } from './apiClient';
 import { conflictService } from './conflictService';
 import { toastService } from './toastService';
+import {
+    initBackupMetadata,
+    getLastBackupTimestamp,
+    setLastBackupTimestamp,
+    getLastBackupHash,
+    setLastBackupHash,
+    addNetworkBytes,
+    getNetworkStatsFromCache,
+} from './backupMetadata';
 
 export const AUTO_BACKUP_ENABLED_ID = 'autoBackupEnabled';
 export const LOW_DATA_MODE_ID = 'lowDataMode';
@@ -24,18 +33,32 @@ interface BackupState {
 
 let state: BackupState = {
     status: 'idle',
-    lastBackupTimestamp: localStorage.getItem('lastBackupTimestamp') ? parseInt(localStorage.getItem('lastBackupTimestamp')!, 10) : null,
+    lastBackupTimestamp: null, // populated in initBackupService after db.settings load
 };
 
 type Subscriber = (state: BackupState) => void;
 const subscribers: Set<Subscriber> = new Set();
+let conflictResolutionListenerBound = false;
 
 // --- HELPERS ---
 
 const getApiKey = async (): Promise<string> => {
     try {
         const setting = await db.settings.get(BACKUP_API_KEY_ID);
-        return (setting?.value as string) || '';
+        const persisted = typeof setting?.value === 'string' ? setting.value.trim() : '';
+        if (persisted.length > 0) {
+            return persisted;
+        }
+
+        // One-time fallback for legacy localStorage key.
+        const legacy = (localStorage.getItem(BACKUP_API_KEY_ID) || '').trim();
+        if (legacy.length > 0) {
+            await db.settings.put({ id: BACKUP_API_KEY_ID, value: legacy });
+            localStorage.removeItem(BACKUP_API_KEY_ID);
+            return legacy;
+        }
+
+        return '';
     } catch (e) {
         return '';
     }
@@ -61,6 +84,9 @@ const isWifi = (): boolean => {
 };
 
 const setupNetworkListener = () => {
+    if (networkListenerBound) return;
+    networkListenerBound = true;
+
     const nav = navigator as any;
     const conn = nav.connection || nav.mozConnection || nav.webkitConnection;
     if (conn) {
@@ -82,13 +108,27 @@ const setupNetworkListener = () => {
 export const initBackupService = async () => {
     try {
         // Ensure DB is initialized before checking settings
-        await db.init(); 
-        
+        await db.init();
+        await initBackupMetadata();
+
+        // Restore persisted timestamp into live state
+        const persisted = getLastBackupTimestamp();
+        if (persisted !== null) {
+            state = { ...state, lastBackupTimestamp: persisted };
+        }
+
         const enabledSetting = await db.settings.get(AUTO_BACKUP_ENABLED_ID);
         const apiKey = await getApiKey();
         const isEnabled = enabledSetting?.value !== false && apiKey.length > 0;
 
         setupNetworkListener();
+        if (!conflictResolutionListenerBound) {
+            window.addEventListener('backup-conflict-resolved', () => {
+                setState({ status: 'idle' });
+                triggerBackup();
+            });
+            conflictResolutionListenerBound = true;
+        }
 
         if (!isEnabled) {
             setState({ status: 'disabled' });
@@ -136,21 +176,10 @@ async function decompress(blob: Blob): Promise<string> {
     return await new Response(decompressedStream).text();
 }
 
-export const getNetworkStats = () => {
-    const total = localStorage.getItem('totalBytesUploaded') || '0';
-    const session = sessionStorage.getItem('sessionBytesUploaded') || '0';
-    return {
-        total: parseInt(total, 10),
-        session: parseInt(session, 10)
-    };
-};
+export const getNetworkStats = () => getNetworkStatsFromCache();
 
 const updateNetworkStats = (bytes: number) => {
-    const currentTotal = parseInt(localStorage.getItem('totalBytesUploaded') || '0', 10);
-    localStorage.setItem('totalBytesUploaded', (currentTotal + bytes).toString());
-    
-    const currentSession = parseInt(sessionStorage.getItem('sessionBytesUploaded') || '0', 10);
-    sessionStorage.setItem('sessionBytesUploaded', (currentSession + bytes).toString());
+    void addNetworkBytes(bytes);
 };
 
 // --- API LOGIC ---
@@ -158,6 +187,7 @@ const updateNetworkStats = (bytes: number) => {
 let isSyncing = false;
 let syncQueued = false;
 let retryCount = 0;
+let networkListenerBound = false;
 
 interface ServerBackupItem {
     filename: string;
@@ -172,7 +202,7 @@ const performBackupToServer = async (force: boolean = false): Promise<Error | nu
     }
 
     const apiKey = await getApiKey();
-    if (!apiKey && !force) {
+    if (!apiKey) {
         setState({ status: 'disabled' });
         return null;
     }
@@ -203,12 +233,12 @@ const performBackupToServer = async (force: boolean = false): Promise<Error | nu
         
         // --- DEDUPLICATION ---
         const currentHash = await computeHash(backupJson);
-        const lastHash = localStorage.getItem('lastBackupHash');
+        const lastHash = getLastBackupHash();
         
         if (!force && currentHash === lastHash) {
             console.log("Backup skipped: Content unchanged since last sync.");
             const timestamp = Date.now();
-            localStorage.setItem('lastBackupTimestamp', timestamp.toString());
+            await setLastBackupTimestamp(timestamp);
             setState({ status: 'synced', lastBackupTimestamp: timestamp });
             return null;
         }
@@ -287,7 +317,7 @@ const performBackupToServer = async (force: boolean = false): Promise<Error | nu
         }
         
         updateNetworkStats(backupBlob.size);
-        localStorage.setItem('lastBackupHash', currentHash);
+        await setLastBackupHash(currentHash);
 
         // 2. Handle daily snapshots.
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
@@ -311,13 +341,22 @@ const performBackupToServer = async (force: boolean = false): Promise<Error | nu
         }
         
         const timestamp = Date.now();
-        localStorage.setItem('lastBackupTimestamp', timestamp.toString());
+        await setLastBackupTimestamp(timestamp);
         setState({ status: 'synced', lastBackupTimestamp: timestamp });
         retryCount = 0;
         return null;
 
     } catch (error) {
         console.error('An error occurred during server backup:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        const authError = message.includes(' 401 ') || message.includes(' 403 ');
+
+        if (authError) {
+            retryCount = 0;
+            setState({ status: 'disabled' });
+            return error as Error;
+        }
+
         setState({ status: 'failed' });
         
         if (!force && retryCount < 5) {
@@ -512,7 +551,7 @@ export const fetchLatestBackup = async (force: boolean = false): Promise<{ conte
     }
 };
 
-export const listServerBackups = async (): Promise<{ id: string; createdAt: string; size: number }[]> => {
+export const listServerBackups = async (): Promise<{ id: string; createdAt: string; size: number; downloadUrl?: string }[]> => {
     try {
         await db.init();
         const apiKey = await getApiKey();
@@ -536,12 +575,13 @@ export const listServerBackups = async (): Promise<{ id: string; createdAt: stri
         const responseData = await response.json();
         const serverBackups: ServerBackupItem[] = responseData.backups || [];
 
-        const backups: { id: string; createdAt: string; size: number }[] = serverBackups
+        const backups: { id: string; createdAt: string; size: number; downloadUrl?: string }[] = serverBackups
             .filter(b => b.filename.endsWith('.json') || b.filename.endsWith('.json.gz'))
             .map((b: any) => ({
                 id: b.filename,
                 createdAt: b.modified,
                 size: b.size,
+                downloadUrl: b.download_url || b.downloadUrl,
             }));
 
         backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -556,12 +596,12 @@ export const listServerBackups = async (): Promise<{ id: string; createdAt: stri
     }
 };
 
-export const fetchBackupContent = async (backupId: string): Promise<string | null> => {
+export const fetchBackupContent = async (backupId: string, downloadUrl?: string): Promise<string | null> => {
     try {
         const apiKey = await getApiKey();
         if (!apiKey) throw new Error("Backup API Key not configured.");
 
-        const response = await fetch(`${UPLOAD_URL}/${encodeURIComponent(backupId)}`, {
+        const response = await fetch(downloadUrl || `${UPLOAD_URL}/${encodeURIComponent(backupId)}`, {
             method: 'GET',
             headers: { 'X-API-Key': apiKey },
         });

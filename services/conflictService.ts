@@ -1,6 +1,7 @@
 
 import { Book, GeneralDoc } from '../types';
 import { db } from './apiClient';
+import { setLastBackupTimestamp, setLastBackupHash } from './backupMetadata';
 
 export type ConflictResolutionStrategy = 'use_local' | 'use_remote' | 'smart_merge';
 
@@ -36,6 +37,14 @@ class ConflictService {
         this.subscribers.forEach(cb => cb(this.state));
     }
 
+    private async computeHash(text: string): Promise<string> {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(text);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
     public triggerConflict(localData: string, remoteData: string, remoteTimestamp: number) {
         this.state = {
             isConflict: true,
@@ -64,16 +73,27 @@ class ConflictService {
         try {
             switch (strategy) {
                 case 'use_local':
-                    // Do nothing to local DB, just clear conflict. 
-                    // The next backup cycle will overwrite the server.
+                    // User intentionally keeps local content.
+                    // Persist a new sync baseline to avoid recurring conflict prompts on refresh.
+                    void setLastBackupTimestamp(Date.now());
+                    void setLastBackupHash(await this.computeHash(this.state.localData));
                     break;
                 case 'use_remote':
                     await db.restore(this.state.remoteData);
+                    void setLastBackupTimestamp(this.state.remoteTimestamp);
+                    void setLastBackupHash(await this.computeHash(this.state.remoteData));
                     break;
                 case 'smart_merge':
                     await db.smartMerge(this.state.remoteData);
+                    // Mark current moment as a conflict resolution baseline.
+                    void setLastBackupTimestamp(Date.now());
+                    // Force next backup to recalculate and upload merged state.
+                    void setLastBackupHash(null);
                     break;
             }
+
+            // Allow other services/UI to react to conflict resolution consistently.
+            window.dispatchEvent(new CustomEvent('backup-conflict-resolved', { detail: { strategy } }));
         } finally {
             this.dismiss();
         }

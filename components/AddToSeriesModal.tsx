@@ -3,6 +3,7 @@ import { Book, Series } from '../types';
 import { ICONS } from '../constants';
 import { AppContext } from '../contexts/AppContext';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface AddToSeriesModalProps {
     book: Book;
@@ -93,4 +94,4 @@ const AddToSeriesModal: React.FC<AddToSeriesModalProps> = ({ book, onClose }) =>
     );
 };
 
-export default AddToSeriesModal;
+export default withModalPortal(AddToSeriesModal);

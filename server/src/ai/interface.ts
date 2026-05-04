@@ -28,6 +28,7 @@ export interface GenerateOptions {
   temperature?: number;
   responseMimeType?: string;
   responseSchema?: Record<string, unknown>;
+  imageConfig?: Record<string, unknown>;
   tools?: Tool[];
   toolConfig?: Record<string, unknown>;
   /** For audio generation – ignored by non-Gemini providers */
@@ -37,7 +38,7 @@ export interface GenerateOptions {
 
 export interface GenerateRequest {
   model?: string;
-  contents: Content[] | string;
+  contents: Content[] | Content | string;
   config?: GenerateOptions;
 }
 
@@ -64,9 +65,12 @@ export interface AIProvider {
 }
 
 /** Normalise contents to Content[]: allows callers to pass a plain string */
-export function normaliseContents(contents: Content[] | string): Content[] {
+export function normaliseContents(contents: Content[] | Content | string): Content[] {
   if (typeof contents === 'string') {
     return [{ role: 'user', parts: [{ text: contents }] }];
+  }
+  if (!Array.isArray(contents)) {
+    return [{ role: contents.role ?? 'user', parts: contents.parts ?? [] }];
   }
   return contents;
 }

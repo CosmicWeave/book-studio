@@ -18,11 +18,12 @@ instructions.get('/:id', async (c) => {
 instructions.put('/:id', async (c) => {
   const body = await c.req.json();
   const id = c.req.param('id');
-  const { id: _id, ...data } = body;
+  const { id: _id, ...raw } = body;
+  const data = Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== undefined));
   const item = await prisma.instructionTemplate.upsert({
     where: { id },
     update: data,
-    create: { id, ...data },
+    create: { name: '', prompt: '', ...data, id },
   });
   return c.json(serialize(item));
 });

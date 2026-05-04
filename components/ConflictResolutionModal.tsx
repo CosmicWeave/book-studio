@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { conflictService, ConflictResolutionStrategy } from '../services/conflictService';
 import { ICONS } from '../constants';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
+import { toastService } from '../services/toastService';
 
 const ConflictResolutionModal: React.FC = () => {
     const [isOpen, setIsOpen] = useState(false);
@@ -22,8 +24,15 @@ const ConflictResolutionModal: React.FC = () => {
         return unsubscribe;
     }, []);
 
-    const handleResolve = (strategy: ConflictResolutionStrategy) => {
-        conflictService.resolve(strategy);
+    const handleResolve = async (strategy: ConflictResolutionStrategy) => {
+        await conflictService.resolve(strategy);
+        if (strategy === 'use_local') {
+            toastService.success('Local version selected. Conflict cleared.');
+        } else if (strategy === 'use_remote') {
+            toastService.success('Cloud version restored. Conflict cleared.');
+        } else {
+            toastService.success('Smart merge complete. Conflict cleared.');
+        }
     };
 
     if (!isOpen || !diff) return null;
@@ -131,22 +140,22 @@ const ConflictResolutionModal: React.FC = () => {
                 </div>
 
                 {/* Footer Actions */}
-                <div className="p-6 bg-zinc-50 dark:bg-zinc-900/50 border-t border-zinc-200 dark:border-zinc-800 flex flex-col sm:flex-row gap-4 justify-between items-center">
-                    <div className="text-xs text-zinc-500 dark:text-zinc-400 italic">
+                <div className="p-6 bg-zinc-50 dark:bg-zinc-900/50 border-t border-zinc-200 dark:border-zinc-800 flex flex-col gap-4">
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400 italic text-center">
                         Tip: Smart Merge combines books from both sides, keeping the latest version of each book.
                     </div>
-                    <div className="flex gap-3 w-full sm:w-auto">
+                    <div className="flex flex-wrap gap-3 justify-end">
                         <button 
                             onClick={() => handleResolve('use_local')}
                             className="flex-1 sm:flex-none px-4 py-2 rounded-lg border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 text-sm font-semibold transition-colors"
                         >
-                            Overwrite Server
+                            Use Local Version
                         </button>
                         <button 
                             onClick={() => handleResolve('use_remote')}
                             className="flex-1 sm:flex-none px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-sm font-semibold transition-colors"
                         >
-                            Overwrite Local
+                            Use Cloud Version
                         </button>
                         <button 
                             onClick={() => handleResolve('smart_merge')}
@@ -162,4 +171,4 @@ const ConflictResolutionModal: React.FC = () => {
     );
 };
 
-export default ConflictResolutionModal;
+export default withModalPortal(ConflictResolutionModal);

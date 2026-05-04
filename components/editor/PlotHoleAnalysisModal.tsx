@@ -2,6 +2,7 @@
 import React from 'react';
 import { PlotHole } from '../../types';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 interface PlotHoleAnalysisModalProps {
     isOpen: boolean;
@@ -91,4 +92,4 @@ const PlotHoleAnalysisModal: React.FC<PlotHoleAnalysisModalProps> = ({ isOpen, o
     );
 };
 
-export default PlotHoleAnalysisModal;
+export default withModalPortal(PlotHoleAnalysisModal);

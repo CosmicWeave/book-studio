@@ -14,15 +14,124 @@ import { logError } from './errorLogger';
 
 const API_BASE = '/api';
 
-function dispatchChange() {
-  window.dispatchEvent(new Event('dbversionchange'));
+// ─── Change notifications ────────────────────────────────────────────────────
+
+// 'dbdatachange' fires in the current tab after every successful write so that
+// UI widgets (storage stats, etc.) can refresh without a full reload.
+// 'dbversionchange' via BroadcastChannel fires in OTHER tabs so they can react
+// to remote changes — this is what the "another tab" toast is wired to.
+
+const _bc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('book_studio_db') : null;
+
+if (_bc) {
+  _bc.onmessage = () => {
+    window.dispatchEvent(new Event('dbversionchange'));
+  };
 }
 
+function dispatchChange() {
+  // Notify the current tab's UI widgets
+  window.dispatchEvent(new Event('dbdatachange'));
+  // Notify other open tabs
+  try { _bc?.postMessage('change'); } catch { /* ignore */ }
+}
+
+// ─── Offline write queue ──────────────────────────────────────────────────────
+
+const QUEUE_KEY = 'api_write_queue_v1';
+const MAX_QUEUE_BYTES = 4 * 1024 * 1024; // 4 MB safety limit
+
+interface QueuedWrite {
+  path: string;
+  method: 'PUT' | 'DELETE';
+  body?: string;
+  enqueuedAt: number;
+}
+
+let _memQueue: QueuedWrite[] = [];
+
+function _loadQueue(): QueuedWrite[] {
+  try {
+    const raw = localStorage.getItem(QUEUE_KEY);
+    if (!raw) return [];
+    _memQueue = JSON.parse(raw) as QueuedWrite[];
+    return _memQueue;
+  } catch {
+    return _memQueue;
+  }
+}
+
+function _saveQueue(q: QueuedWrite[]): void {
+  _memQueue = q;
+  try {
+    const s = JSON.stringify(q);
+    localStorage.setItem(QUEUE_KEY, s.length <= MAX_QUEUE_BYTES ? s : JSON.stringify(q.slice(-20)));
+  } catch {
+    // localStorage unavailable (e.g. private mode) — in-memory only
+  }
+  window.dispatchEvent(new CustomEvent('writequeuechange', { detail: { count: q.length } }));
+}
+
+function _enqueueWrite(path: string, method: 'PUT' | 'DELETE', body?: string): void {
+  // Deduplicate by path: most-recent intent wins
+  const q = _loadQueue().filter(op => op.path !== path);
+  q.push({ path, method, body: method === 'PUT' ? body : undefined, enqueuedAt: Date.now() });
+  _saveQueue(q);
+}
+
+/** Returns the number of writes currently queued for replay. */
+export function getPendingWriteCount(): number {
+  return _loadQueue().length;
+}
+
+/** Replays all queued writes. Call when the connection is restored. */
+export async function flushWriteQueue(): Promise<void> {
+  const q = _loadQueue();
+  if (q.length === 0) return;
+  const failed: QueuedWrite[] = [];
+  let anySucceeded = false;
+  for (const op of q) {
+    try {
+      await fetch(`${API_BASE}${op.path}`, {
+        method: op.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: op.body,
+      }).then(res => {
+        if (!res.ok) throw new Error(`${res.status}`);
+      });
+      anySucceeded = true;
+    } catch {
+      failed.push(op);
+    }
+  }
+  _saveQueue(failed);
+  // Notify once after the entire flush — not once per write — to avoid
+  // triggering a cascade of cross-tab toasts for each replayed operation.
+  if (anySucceeded) {
+    window.dispatchEvent(new Event('dbdatachange'));
+    try { _bc?.postMessage('change'); } catch { /* ignore */ }
+  }
+}
+
+// ─── Fetch wrapper ────────────────────────────────────────────────────────────
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T & { _status?: number }> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+  } catch {
+    // Network error — server unreachable. Queue mutating ops and resolve optimistically.
+    const method = (options?.method ?? 'GET').toUpperCase();
+    if (method === 'PUT' || method === 'DELETE') {
+      _enqueueWrite(path, method as 'PUT' | 'DELETE', options?.body as string | undefined);
+      dispatchChange();
+      return undefined as unknown as T;
+    }
+    throw new Error('Network error: server unreachable');
+  }
   if (!res.ok) {
     let msg = `API error ${res.status}`;
     try {
@@ -177,27 +286,34 @@ class ApiDB {
     }, null, 2);
   }
 
-  async restore(jsonString: string): Promise<void> {
+  async restore(jsonString: string, onProgress?: (stage: string, pct: number) => void): Promise<void> {
     const data = JSON.parse(jsonString);
 
-    const restoreStore = async (store: ReturnType<typeof makeStore<any>>, items: any[]) => {
-      if (!items) return;
+    const stores: Array<{ label: string; store: ReturnType<typeof makeStore<any>>; items: any[] }> = [
+      { label: 'Books', store: this.books as any, items: data.books ?? [] },
+      { label: 'Documents', store: this.documents as any, items: data.documents ?? [] },
+      { label: 'Instructions', store: this.instructions as any, items: data.instructions ?? [] },
+      { label: 'Styles', store: this.styles as any, items: data.styles ?? [] },
+      { label: 'Snapshots', store: this.snapshots as any, items: data.snapshots ?? [] },
+      { label: 'Macros', store: this.macros as any, items: data.macros ?? [] },
+      { label: 'Series', store: this.series as any, items: data.series ?? [] },
+      { label: 'Reading progress', store: this.readingProgress as any, items: data.readingProgress ?? [] },
+    ];
+
+    const total = stores.length + (data.readerSettings ? 1 : 0);
+    for (let i = 0; i < stores.length; i++) {
+      const { label, store, items } = stores[i];
+      onProgress?.(label, Math.round((i / total) * 100));
       await store.clear();
       for (const item of items) await store.put(item);
-    };
-
-    await restoreStore(this.books as any, data.books);
-    await restoreStore(this.documents as any, data.documents);
-    await restoreStore(this.instructions as any, data.instructions);
-    await restoreStore(this.styles as any, data.styles);
-    await restoreStore(this.snapshots as any, data.snapshots);
-    await restoreStore(this.macros as any, data.macros);
-    await restoreStore(this.series as any, data.series);
-    await restoreStore(this.readingProgress as any, data.readingProgress);
+    }
 
     if (data.readerSettings) {
+      onProgress?.('Settings', Math.round((stores.length / total) * 100));
       await this.settings.put({ id: 'readerSettings', value: data.readerSettings });
     }
+
+    onProgress?.('Done', 100);
   }
 
   async merge(jsonString: string, options: { selectedNewBooks: string[]; overwriteExisting: boolean }): Promise<void> {

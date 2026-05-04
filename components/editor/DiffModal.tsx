@@ -2,6 +2,7 @@
 import React from 'react';
 import { ICONS } from '../../constants';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 interface DiffModalProps {
     isOpen: boolean;
@@ -68,4 +69,4 @@ const DiffModal: React.FC<DiffModalProps> = ({ isOpen, onClose, chapterTitle, ch
     );
 };
 
-export default DiffModal;
+export default withModalPortal(DiffModal);

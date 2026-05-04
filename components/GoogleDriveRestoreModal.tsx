@@ -3,6 +3,7 @@ import { GoogleDriveFile } from '../types';
 import { ICONS } from '../constants';
 import { modalService } from '../services/modalService';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface GoogleDriveRestoreModalProps {
     isOpen: boolean;
@@ -70,4 +71,4 @@ const GoogleDriveRestoreModal: React.FC<GoogleDriveRestoreModalProps> = ({ isOpe
     );
 };
 
-export default GoogleDriveRestoreModal;
+export default withModalPortal(GoogleDriveRestoreModal);

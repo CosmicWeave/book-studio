@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSuggestion } from '../../types';
 import { ICONS } from '../../constants';
 import Icon from '../Icon';
+import { withModalPortal } from '../ModalPortal';
 
 type StyleAnalysisModalProps = {
     isOpen: boolean;
@@ -78,4 +79,4 @@ const StyleAnalysisModal: React.FC<StyleAnalysisModalProps> = ({ isOpen, onClose
     );
 };
 
-export default StyleAnalysisModal;
+export default withModalPortal(StyleAnalysisModal);

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Loader from './Loader';
 import { ICONS } from '../constants';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface RestoreFromServerModalProps {
     backupTimestamp: number;
@@ -66,4 +67,4 @@ const RestoreFromServerModal: React.FC<RestoreFromServerModalProps> = ({
     );
 };
 
-export default RestoreFromServerModal;
+export default withModalPortal(RestoreFromServerModal);

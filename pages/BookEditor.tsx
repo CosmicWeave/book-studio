@@ -31,6 +31,7 @@ import TextToImageModal from '../components/editor/TextToImageModal';
 import CharacterVoiceAnalysisModal from '../components/editor/CharacterVoiceAnalysisModal';
 import PlotHoleAnalysisModal from '../components/editor/PlotHoleAnalysisModal';
 import LoreConsistencyModal from '../components/editor/LoreConsistencyModal';
+import { DEFAULT_BOOK_EDITOR_UI_STATE, loadBookEditorUiState, patchBookEditorUiState } from '../services/bookEditorUiState';
 
 interface BookEditorProps {
   onSave: () => void;
@@ -122,22 +123,47 @@ const BookEditor: React.FC<BookEditorProps> = ({ onSave, onBack }) => {
   
     const { registerCommands, unregisterCommands } = useCommandPalette();
 
-    const [activeView, setActiveView] = useState<'editor' | 'corkboard' | 'outliner'>('editor');
-    const [isOutlineOpen, setIsOutlineOpen] = useState(true);
+    const [activeView, setActiveView] = useState<'editor' | 'corkboard' | 'outliner'>(DEFAULT_BOOK_EDITOR_UI_STATE.activeView);
+    const [isOutlineOpen, setIsOutlineOpen] = useState(DEFAULT_BOOK_EDITOR_UI_STATE.isOutlineOpen);
     const mainScrollRef = useRef<HTMLElement>(null);
     const [isHeaderVisible, setIsHeaderVisible] = useState(true);
     const lastScrollTop = useRef(0);
     const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
+    const [isEditorUiStateLoaded, setIsEditorUiStateLoaded] = useState(false);
 
     // View Settings State with Persistence
-    const [viewSettings, setViewSettings] = useState<ViewSettings>(() => {
-        const saved = localStorage.getItem('bookEditorViewSettings');
-        return saved ? JSON.parse(saved) : { focusMode: false, width: 'standard', font: 'serif' };
-    });
+    const [viewSettings, setViewSettings] = useState<ViewSettings>(DEFAULT_BOOK_EDITOR_UI_STATE.viewSettings);
 
     useEffect(() => {
-        localStorage.setItem('bookEditorViewSettings', JSON.stringify(viewSettings));
-    }, [viewSettings]);
+        let cancelled = false;
+
+        const loadUiState = async () => {
+            try {
+                const persisted = await loadBookEditorUiState();
+                if (cancelled) return;
+                setActiveView(persisted.activeView);
+                setIsOutlineOpen(persisted.isOutlineOpen);
+                setViewSettings(persisted.viewSettings);
+            } catch (error) {
+                console.error('Failed to load book editor UI state', error);
+            } finally {
+                if (!cancelled) {
+                    setIsEditorUiStateLoaded(true);
+                }
+            }
+        };
+
+        void loadUiState();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!isEditorUiStateLoaded) return;
+        void patchBookEditorUiState({ activeView, isOutlineOpen, viewSettings });
+    }, [activeView, isOutlineOpen, viewSettings, isEditorUiStateLoaded]);
     
     const handleSaveAndClose = useCallback(async () => {
         await handleSaveToDB();

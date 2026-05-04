@@ -9,6 +9,7 @@ import { checkServerAiStatus } from '../services/gemini';
 
 interface AppContextType {
     books: Book[];
+    booksLoaded: boolean;
     documents: GeneralDoc[];
     series: Series[];
     macros: Macro[];
@@ -51,6 +52,7 @@ export const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [books, setBooks] = useState<Book[]>([]);
+    const [booksLoaded, setBooksLoaded] = useState(false);
     const [documents, setDocuments] = useState<GeneralDoc[]>([]);
     const [series, setSeries] = useState<Series[]>([]);
     const [macros, setMacros] = useState<Macro[]>([]);
@@ -75,6 +77,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
                 db.settings.get('syncProvider')
             ]);
             setBooks(booksData.sort((a, b) => b.updatedAt - a.updatedAt));
+            setBooksLoaded(true);
             setSeries(seriesData);
             setMacros(macrosData);
             setDocuments(docsData.sort((a, b) => b.updatedAt - a.updatedAt));
@@ -90,7 +93,9 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         checkServerAiStatus().then(setIsAiEnabled).catch(() => setIsAiEnabled(false));
         fetchData();
         const handleVersionChange = () => {
-            toastService.error("Database updated in another tab. Please reload.");
+            // Another tab has written data to the server — silently re-fetch so
+            // this tab stays in sync instead of showing a disruptive error toast.
+            void fetchData();
         };
         window.addEventListener('dbversionchange', handleVersionChange);
         return () => window.removeEventListener('dbversionchange', handleVersionChange);
@@ -351,7 +356,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
     }, [books, audioPlayerService]);
 
     const value: AppContextType = useMemo(() => ({
-        books, documents, series, macros, audiobookState, isAiEnabled, syncProvider, setSyncProvider,
+        books, booksLoaded, documents, series, macros, audiobookState, isAiEnabled, syncProvider, setSyncProvider,
         createNewBook, deleteBook, restoreBook, archiveBook, updateBook,
         fetchSnapshotsForBook, createSnapshot, restoreSnapshot, deleteSnapshot,
         createNewSeriesAndFirstBook, addBookToSeries, removeBookFromSeries, reorderBooksInSeries, updateSeries,
@@ -367,7 +372,7 @@ export const AppContextProvider: React.FC<{ children: ReactNode }> = ({ children
         jumpToParagraph: (idx: number) => audioPlayerService.jumpToParagraph(idx),
         skipParagraph: (dir: 'next' | 'prev') => audioPlayerService.skipParagraph(dir),
     }), [
-        books, documents, series, macros, audiobookState, isAiEnabled, syncProvider, setSyncProvider, createNewBook, deleteBook, restoreBook, archiveBook, updateBook,
+        books, booksLoaded, documents, series, macros, audiobookState, isAiEnabled, syncProvider, setSyncProvider, createNewBook, deleteBook, restoreBook, archiveBook, updateBook,
         fetchSnapshotsForBook, createSnapshot, restoreSnapshot, deleteSnapshot,
         createNewSeriesAndFirstBook, addBookToSeries, removeBookFromSeries, reorderBooksInSeries, updateSeries,
         createRelatedBook, createNewDocument, updateDocument, deleteDocument, playAudiobook, audioPlayerService

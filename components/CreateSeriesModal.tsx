@@ -4,6 +4,7 @@ import { ICONS } from '../constants';
 import { AppContext } from '../contexts/AppContext';
 import { toastService } from '../services/toastService';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface CreateSeriesModalProps {
     isOpen: boolean;
@@ -86,4 +87,4 @@ const CreateSeriesModal: React.FC<CreateSeriesModalProps> = ({ isOpen, onClose }
     );
 };
 
-export default CreateSeriesModal;
+export default withModalPortal(CreateSeriesModal);

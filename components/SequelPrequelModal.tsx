@@ -9,6 +9,7 @@ import { toastService } from '../services/toastService';
 import Icon from './Icon';
 import { marked } from 'marked';
 import { Content } from '@google/genai';
+import { withModalPortal } from './ModalPortal';
 
 interface SequelPrequelModalProps {
     parentBook: Book;
@@ -405,4 +406,4 @@ Parent Book Outline Summary: ${parentBook.outline.map(ch => ch.title).join(', ')
     );
 };
 
-export default SequelPrequelModal;
+export default withModalPortal(SequelPrequelModal);

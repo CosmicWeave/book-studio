@@ -4,6 +4,7 @@ import { Bookmark } from '../types';
 import { ICONS } from '../constants';
 import Icon from './Icon';
 import { modalService } from '../services/modalService';
+import { withModalPortal } from './ModalPortal';
 
 interface BookmarkManagerModalProps {
     isOpen: boolean;
@@ -127,4 +128,4 @@ const BookmarkManagerModal: React.FC<BookmarkManagerModalProps> = ({
     );
 };
 
-export default BookmarkManagerModal;
+export default withModalPortal(BookmarkManagerModal);

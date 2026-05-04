@@ -4,6 +4,7 @@ import { ICONS } from '../../../constants';
 import { useBookEditor } from '../../../contexts/BookEditorContext';
 import { modalService } from '../../../services/modalService';
 import { toastService } from '../../../services/toastService';
+import { RuntimeAiProvider, getAiRuntimeSelection, setAiRuntimeSelection } from '../../../services/gemini';
 import Icon from '../../Icon';
 
 interface ActionsPanelProps {
@@ -22,6 +23,7 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
         handleGenerateChapters,
         handleGenerateFullBook,
         handleGenerateSpecificChapter,
+        handleStopGenerateFullBook,
         generationMode,
         setGenerationMode,
         setIsSnapshotsPanelOpen,
@@ -29,6 +31,7 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
         setIsEpubModalOpen,
         createSnapshot,
         isGeneratingChapter,
+        isGeneratingRemainingBook,
         isAiEnabled,
         handleRebuildOutline,
         isRebuildingOutline,
@@ -43,8 +46,32 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
     const [showWordGoalInput, setShowWordGoalInput] = useState(false);
     const [wordGoalInput, setWordGoalInput] = useState('');
     const [chapterGenPopover, setChapterGenPopover] = useState<{ index: number; wordCount: string } | null>(null);
+    const [runtimeProvider, setRuntimeProvider] = useState<RuntimeAiProvider | 'default'>('default');
+    const [runtimeModel, setRuntimeModel] = useState('');
 
-    if (!book) return null;
+    useEffect(() => {
+        const current = getAiRuntimeSelection();
+        setRuntimeProvider(current.provider ?? 'default');
+        setRuntimeModel(current.model ?? '');
+
+        const onRuntimeChange = (e: Event) => {
+            const detail = (e as CustomEvent<{ provider?: RuntimeAiProvider; model?: string }>).detail;
+            setRuntimeProvider(detail?.provider ?? 'default');
+            setRuntimeModel(detail?.model ?? '');
+        };
+
+        window.addEventListener('ai-runtime-selection-changed', onRuntimeChange);
+        return () => window.removeEventListener('ai-runtime-selection-changed', onRuntimeChange);
+    }, []);
+
+    const applyRuntimeSelection = () => {
+        setAiRuntimeSelection(runtimeProvider === 'default' ? undefined : runtimeProvider, runtimeModel.trim() || undefined);
+        toastService.success(runtimeProvider === 'default'
+            ? 'AI provider reset to Settings default.'
+            : `AI provider set to ${runtimeProvider}${runtimeModel.trim() ? ` (${runtimeModel.trim()})` : ''}.`);
+    };
+
+            if (!book) return null;
 
     // Calculations
     const totalChapters = book.outline.length;
@@ -213,6 +240,40 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
                 {/* Generation Actions */}
                 {isAiEnabled && !isComplete ? (
                     <div className="space-y-2">
+                        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-2.5 space-y-2">
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">AI Provider (Runtime)</div>
+                            <div className="grid grid-cols-1 gap-2">
+                                <select
+                                    value={runtimeProvider}
+                                    onChange={(e) => setRuntimeProvider(e.target.value as RuntimeAiProvider | 'default')}
+                                    className="w-full rounded-md border border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm px-2 py-1.5"
+                                    aria-label="Runtime AI provider"
+                                >
+                                    <option value="default">Use Settings Default</option>
+                                    <option value="gemini">Gemini</option>
+                                    <option value="ollama">Ollama</option>
+                                    <option value="anythingllm">AnythingLLM</option>
+                                    <option value="openai">OpenAI</option>
+                                </select>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={runtimeModel}
+                                        onChange={(e) => setRuntimeModel(e.target.value)}
+                                        placeholder="Optional model override"
+                                        className="flex-1 rounded-md border border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm px-2 py-1.5"
+                                        aria-label="Runtime AI model"
+                                    />
+                                    <button
+                                        onClick={applyRuntimeSelection}
+                                        className="px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-700 text-xs font-semibold text-zinc-800 dark:text-zinc-100 hover:bg-zinc-300 dark:hover:bg-zinc-600"
+                                    >
+                                        Apply
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                         <div className="grid grid-cols-2 gap-1 p-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40">
                             <button
                                 onClick={() => setGenerationMode('full')}
@@ -243,13 +304,22 @@ const ActionsPanel: React.FC<ActionsPanelProps> = ({ onSaveAndClose }) => {
                                 <><Icon name="WAND" className="w-5 h-5" /><span>Write Next Chapter</span></>
                             )}
                         </button>
-                        <button 
-                            onClick={() => handleGenerateFullBook()} 
-                            disabled={isGeneratingChapter !== null} 
-                            className="w-full text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline py-1 transition-colors text-center"
-                        >
-                            Auto-Generate Remaining Chapters
-                        </button>
+                        {isGeneratingRemainingBook ? (
+                            <button
+                                onClick={() => handleStopGenerateFullBook()}
+                                className="w-full text-xs font-semibold text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 hover:underline py-1 transition-colors text-center"
+                            >
+                                Stop Auto-Generation
+                            </button>
+                        ) : (
+                            <button 
+                                onClick={() => handleGenerateFullBook()} 
+                                disabled={isGeneratingChapter !== null} 
+                                className="w-full text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline py-1 transition-colors text-center"
+                            >
+                                Auto-Generate Remaining Chapters
+                            </button>
+                        )}
                     </div>
                 ) : isComplete && (
                     <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-900 rounded-lg p-4 text-center">

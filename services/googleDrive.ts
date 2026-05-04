@@ -1,5 +1,5 @@
 
-import { getCredentials, saveCredentials, clearCredentials, DISCOVERY_DOC, SCOPES } from './googleDriveConfig';
+import { getCredentials, saveCredentials, clearCredentials, DISCOVERY_DOC, SCOPES, getGdriveConnected, setGdriveConnectedPersisted } from './googleDriveConfig';
 import { db } from './apiClient';
 import { GoogleDriveFile } from '../types';
 
@@ -54,7 +54,7 @@ export const initGoogleDriveService = (): Promise<void> => {
             if (gapiInited && gisInited) {
                 setInitState('ready');
                 // Try to restore session if previously signed in
-                if (localStorage.getItem('gdrive_connected') === 'true') {
+                if (getGdriveConnected()) {
                     attemptSilentSignIn();
                 }
             }
@@ -140,7 +140,7 @@ export const initGoogleDriveService = (): Promise<void> => {
 };
 
 export const configureDrive = async (clientId: string, apiKey: string) => {
-    saveCredentials(clientId, apiKey);
+    await saveCredentials(clientId, apiKey);
     // Reset state to force re-initialization
     gapiInited = false;
     gisInited = false;
@@ -149,8 +149,8 @@ export const configureDrive = async (clientId: string, apiKey: string) => {
     await initGoogleDriveService();
 };
 
-export const disconnectDrive = () => {
-    clearCredentials();
+export const disconnectDrive = async () => {
+    await clearCredentials();
     signOut();
     setInitState('unconfigured');
 };
@@ -164,7 +164,7 @@ const handleTokenResponse = (resp: any) => {
         const expiresIn = resp.expires_in ? parseInt(resp.expires_in) : 3599;
         tokenExpiresAt = Date.now() + (expiresIn * 1000) - 60000; // Buffer 1 minute
         
-        localStorage.setItem('gdrive_connected', 'true');
+        void setGdriveConnectedPersisted(true);
         fetchUserProfile();
     }
 };
@@ -223,7 +223,7 @@ export const signOut = () => {
     accessToken = null;
     userProfile = null;
     tokenExpiresAt = 0;
-    localStorage.removeItem('gdrive_connected');
+    void setGdriveConnectedPersisted(false);
     notifyListeners();
 };
 
@@ -251,7 +251,7 @@ const ensureToken = async (): Promise<void> => {
     }
 
     // If we don't have a token but user was connected, try silent refresh
-    if (localStorage.getItem('gdrive_connected') === 'true') {
+    if (getGdriveConnected()) {
         return new Promise((resolve, reject) => {
             const start = Date.now();
             if (tokenClient) {

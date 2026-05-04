@@ -7,6 +7,9 @@ import { marked } from 'marked';
 import { useBookEditor } from '../../contexts/BookEditorContext';
 import DiffModal from './DiffModal';
 import NewBookFromChatModal from './NewBookFromChatModal';
+import { withModalPortal } from '../ModalPortal';
+import { RuntimeAiProvider, getAiRuntimeSelection, setAiRuntimeSelection } from '../../services/gemini';
+import { toastService } from '../../services/toastService';
 
 interface ChatModalProps {
     isOpen: boolean;
@@ -40,6 +43,8 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
     const [localChapterCounts, setLocalChapterCounts] = useState<Record<number, number>>({});
     // Currently open new-book modal proposal
     const [newBookProposal, setNewBookProposal] = useState<{ index: number; args: any; chapterCount: number } | null>(null);
+    const [runtimeProvider, setRuntimeProvider] = useState<RuntimeAiProvider | 'default'>('default');
+    const [runtimeModel, setRuntimeModel] = useState('');
     
     // Use chatMessages from context if available (for streaming), fallback to props
     const messagesToRender = chatMessages || initialMessages;
@@ -61,6 +66,21 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
             }
         }
     }, [messagesToRender, isOpen, isLoading]);
+
+    useEffect(() => {
+        const current = getAiRuntimeSelection();
+        setRuntimeProvider(current.provider ?? 'default');
+        setRuntimeModel(current.model ?? '');
+
+        const onRuntimeChange = (e: Event) => {
+            const detail = (e as CustomEvent<{ provider?: RuntimeAiProvider; model?: string }>).detail;
+            setRuntimeProvider(detail?.provider ?? 'default');
+            setRuntimeModel(detail?.model ?? '');
+        };
+
+        window.addEventListener('ai-runtime-selection-changed', onRuntimeChange);
+        return () => window.removeEventListener('ai-runtime-selection-changed', onRuntimeChange);
+    }, []);
 
     const handleSend = (e?: React.FormEvent) => {
         e?.preventDefault();
@@ -90,6 +110,13 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
             handleApplyEdit(reviewData.chapterIndex, reviewData.newContent);
             setReviewData(null);
         }
+    };
+
+    const applyRuntimeSelection = () => {
+        setAiRuntimeSelection(runtimeProvider === 'default' ? undefined : runtimeProvider, runtimeModel.trim() || undefined);
+        toastService.success(runtimeProvider === 'default'
+            ? 'AI provider reset to Settings default.'
+            : `AI provider set to ${runtimeProvider}${runtimeModel.trim() ? ` (${runtimeModel.trim()})` : ''}.`);
     };
 
     if (!isOpen) return null;
@@ -317,6 +344,38 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
 
                 {/* Input Area */}
                 <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky bottom-0">
+                    <div className="mb-3 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-2.5 space-y-2">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">AI Provider (Runtime)</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                            <select
+                                value={runtimeProvider}
+                                onChange={(e) => setRuntimeProvider(e.target.value as RuntimeAiProvider | 'default')}
+                                className="w-full rounded-md border border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm px-2 py-1.5"
+                                aria-label="Runtime AI provider"
+                            >
+                                <option value="default">Use Settings Default</option>
+                                <option value="gemini">Gemini</option>
+                                <option value="ollama">Ollama</option>
+                                <option value="anythingllm">AnythingLLM</option>
+                                <option value="openai">OpenAI</option>
+                            </select>
+                            <input
+                                type="text"
+                                value={runtimeModel}
+                                onChange={(e) => setRuntimeModel(e.target.value)}
+                                placeholder="Optional model override"
+                                className="w-full rounded-md border border-zinc-300 dark:border-zinc-600 dark:bg-zinc-800 text-sm px-2 py-1.5"
+                                aria-label="Runtime model override"
+                            />
+                            <button
+                                type="button"
+                                onClick={applyRuntimeSelection}
+                                className="rounded-md bg-indigo-600 text-white text-sm font-semibold px-3 py-1.5 hover:bg-indigo-700"
+                            >
+                                Apply
+                            </button>
+                        </div>
+                    </div>
                     {/* Quick Prompts */}
                     {messagesToRender.length < 2 && (
                         <div className="flex gap-2 overflow-x-auto pb-3 mb-1 no-scrollbar mask-fade-right">
@@ -364,4 +423,4 @@ const ChatModal: React.FC<ChatModalProps> = ({ isOpen, onClose, messages: initia
     );
 };
 
-export default ChatModal;
+export default withModalPortal(ChatModal);

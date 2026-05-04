@@ -5,6 +5,7 @@ import { ICONS } from '../constants';
 import { Book } from '../types';
 import { toastService } from '../services/toastService';
 import Icon from './Icon';
+import { withModalPortal } from './ModalPortal';
 
 interface RestoreFromFileDropModalProps {
     fileContent: string;
@@ -212,4 +213,4 @@ const RestoreFromFileDropModal: React.FC<RestoreFromFileDropModalProps> = ({ fil
     );
 };
 
-export default RestoreFromFileDropModal;
+export default withModalPortal(RestoreFromFileDropModal);

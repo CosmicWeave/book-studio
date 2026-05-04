@@ -141,6 +141,7 @@ const UserProfile: React.FC = () => {
 
 const Sidebar: React.FC<SidebarProps> = ({ currentPage, isOpen, setIsOpen }) => {
     const { theme, toggleTheme } = useTheme();
+    const footerOffsetClass = 'bottom-[calc(2.25rem+env(safe-area-inset-bottom))]';
     
     const navItems: { page: Page; label: string; icon: IconName }[] = [
         { page: 'dashboard', label: 'Library', icon: 'GRID' },
@@ -160,12 +161,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, isOpen, setIsOpen }) => 
         <>
             {/* Overlay for mobile */}
             <div
-                className={`fixed inset-0 bg-zinc-900/20 dark:bg-black/50 backdrop-blur-sm z-30 lg:hidden transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                className={`fixed inset-x-0 top-0 ${footerOffsetClass} bg-zinc-900/20 dark:bg-black/50 backdrop-blur-sm z-30 lg:hidden transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
                 onClick={() => setIsOpen(false)}
                 aria-hidden="true"
             />
             
-            <aside className={`fixed inset-y-0 left-0 w-72 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col z-40 transform transition-transform duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:shadow-none shadow-2xl pb-[env(safe-area-inset-bottom)]`}>
+            <aside className={`fixed left-0 top-0 ${footerOffsetClass} w-72 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col z-40 transform transition-transform duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:shadow-none shadow-2xl`}>
                 
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 pb-2 pt-[calc(1.5rem+env(safe-area-inset-top))]">
